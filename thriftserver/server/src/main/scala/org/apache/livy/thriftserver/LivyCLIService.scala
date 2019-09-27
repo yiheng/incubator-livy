@@ -20,16 +20,16 @@ package org.apache.livy.thriftserver
 import java.io.IOException
 import java.util
 import java.util.concurrent.{CancellationException, ExecutionException, TimeoutException, TimeUnit}
-import javax.security.auth.login.LoginException
 
+import javax.security.auth.login.LoginException
 import org.apache.hadoop.security.{SecurityUtil, UserGroupInformation}
 import org.apache.hive.service.ServiceException
 import org.apache.hive.service.cli._
 import org.apache.hive.service.rpc.thrift.{TOperationHandle, TProtocolVersion}
-
 import org.apache.livy.{LIVY_VERSION, LivyConf, Logging}
 import org.apache.livy.thriftserver.auth.AuthFactory
 import org.apache.livy.thriftserver.operation.{Operation, OperationStatus}
+import org.apache.livy.thriftserver.recovery.LivyThriftSessionStore
 import org.apache.livy.thriftserver.serde.ThriftResultSet
 import org.apache.livy.thriftserver.types.Schema
 
@@ -44,7 +44,8 @@ class LivyCLIService(server: LivyThriftServer)
   private var maxTimeout: Long = _
 
   override def init(livyConf: LivyConf): Unit = {
-    sessionManager = new LivyThriftSessionManager(server, livyConf)
+    sessionManager = new LivyThriftSessionManager(server, livyConf,
+      new LivyThriftSessionStore(livyConf))
     addService(sessionManager)
     defaultFetchRows = livyConf.getInt(LivyConf.THRIFT_RESULTSET_DEFAULT_FETCH_SIZE)
     maxTimeout = livyConf.getTimeAsMs(LivyConf.THRIFT_LONG_POLLING_TIMEOUT)
