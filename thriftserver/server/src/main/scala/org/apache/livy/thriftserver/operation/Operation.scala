@@ -34,10 +34,10 @@ import org.apache.livy.thriftserver.types.Schema
 
 abstract class Operation(
     val sessionHandle: SessionHandle,
+    val opHandle: OperationHandle,
     val opType: OperationType) extends Logging {
 
   @volatile private var state = OperationState.INITIALIZED
-  val opHandle = new OperationHandle(opType, sessionHandle.getProtocolVersion)
 
   protected var resultSetPresent: Boolean = false
   @volatile private var operationException: HiveSQLException = _
@@ -48,6 +48,10 @@ abstract class Operation(
 
   protected var operationStart: Long = _
   protected var operationComplete: Long = _
+
+  def this(sessionHandle: SessionHandle, opType: OperationType) = {
+    this(sessionHandle, new OperationHandle(opType, sessionHandle.getProtocolVersion), opType)
+  }
 
   def getBackgroundHandle: Future[_] = backgroundHandle
 

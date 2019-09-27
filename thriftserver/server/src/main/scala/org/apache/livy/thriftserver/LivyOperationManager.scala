@@ -40,7 +40,8 @@ class LivyOperationManager(val livyThriftSessionManager: LivyThriftSessionManage
   private val operationTimeout =
     livyThriftSessionManager.livyConf.getTimeAsMs(LivyConf.THRIFT_IDLE_OPERATION_TIMEOUT)
 
-  private def addOperation(operation: Operation, sessionHandle: SessionHandle): Unit = {
+  private[thriftserver] def addOperation(
+      operation: Operation, sessionHandle: SessionHandle): Unit = {
     handleToOperation.put(operation.opHandle, operation)
     sessionToOperationHandles.synchronized {
       val set = sessionToOperationHandles.getOrElseUpdate(sessionHandle,

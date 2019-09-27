@@ -75,15 +75,46 @@ public class SqlJob implements Job<Void> {
     boolean incremental = Boolean.parseBoolean(
         spark.conf().get(incrementalCollectEnabledProp, defaultIncrementalCollect));
 
-    Iterator<Row> iter;
-    if (incremental) {
-      iter = new ScalaIterator<>(df.rdd().toLocalIterator());
-    } else {
-      iter = df.collectAsList().iterator();
-    }
+    Iterator<Row> iter = new LazyIterator<>(df, incremental);
 
     // Register both the schema and the iterator with the session state after the statement
     // has been executed.
     session.registerStatement(statementId, schema, iter);
+  }
+
+  private static class LazyIterator<T> implements Iterator<T> {
+    private final Dataset<T> df;
+    private final boolean incremental;
+    private volatile Iterator<T> it;
+
+    LazyIterator(Dataset<T> df, boolean incremental) {
+      this.df = df;
+      this.incremental = incremental;
+    }
+
+    @Override
+    public boolean hasNext() { return getIterator().hasNext(); }
+
+    @Override
+    public T next() {
+      return getIterator().next();
+    }
+
+    @Override
+    public void remove() {
+      throw new UnsupportedOperationException();
+    }
+
+    private Iterator<T> getIterator() {
+      if (it == null) {
+        synchronized (this) {
+          if (it == null) {
+            it = incremental ? new ScalaIterator<>(df.rdd().toLocalIterator()) :
+              df.collectAsList().iterator();
+          }
+        }
+      }
+      return it;
+    }
   }
 }

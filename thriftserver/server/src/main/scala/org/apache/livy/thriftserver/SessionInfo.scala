@@ -26,9 +26,8 @@ import org.apache.livy.Logging
 case class SessionInfo(username: String,
     ipAddress: String,
     forwardedAddresses: util.List[String],
-    protocolVersion: TProtocolVersion) {
-  val creationTime: Long = System.currentTimeMillis()
-}
+    protocolVersion: TProtocolVersion,
+    creationTime: Long = System.currentTimeMillis())
 
 /**
  * Mirrors Hive behavior which stores thread local information in its session manager.
