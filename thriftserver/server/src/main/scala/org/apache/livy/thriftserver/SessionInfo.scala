@@ -27,9 +27,8 @@ case class SessionInfo(username: String,
     ipAddress: String,
     forwardedAddresses: util.List[String],
     operationMessages: Option[ConcurrentBoundedLinkedQueue[String]],
-    protocolVersion: TProtocolVersion) {
-  val creationTime: Long = System.currentTimeMillis()
-}
+    protocolVersion: TProtocolVersion,
+    creationTime: Long = System.currentTimeMillis())
 
 /**
  * Mirrors Hive behavior which stores thread local information in its session manager.

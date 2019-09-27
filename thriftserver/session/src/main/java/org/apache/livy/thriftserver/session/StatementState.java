@@ -33,6 +33,8 @@ class StatementState {
   final DataType[] types;
   final JavaRDD<Row> persistRDD;
 
+  private long offset = 0L;
+
   StatementState(StructType schema, Iterator<Row> iter) {
     this(schema, iter, null);
   }
@@ -42,5 +44,13 @@ class StatementState {
     this.iter = iter;
     this.types = SparkUtils.translateSchema(schema);
     this.persistRDD = persistRDD;
+  }
+
+  public long getOffset() {
+    return offset;
+  }
+
+  public void addOffset(long offset) {
+    this.offset += offset;
   }
 }

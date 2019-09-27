@@ -19,14 +19,18 @@ package org.apache.livy.thriftserver
 
 import java.security.PrivilegedExceptionAction
 import java.util.concurrent.RejectedExecutionException
+import java.util.UUID
 
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.hive.service.cli._
+import org.apache.hive.service.rpc.thrift.{TOperationHandle, TOperationType}
 
 import org.apache.livy.Logging
+import org.apache.livy.sessions.Session.RecoveryMetadata
 import org.apache.livy.thriftserver.SessionStates._
 import org.apache.livy.thriftserver.operation.Operation
 import org.apache.livy.thriftserver.rpc.RpcClient
@@ -36,9 +40,10 @@ import org.apache.livy.thriftserver.types.{BasicDataType, DataTypeUtils, Field, 
 class LivyExecuteStatementOperation(
     sessionHandle: SessionHandle,
     statement: String,
-    runInBackground: Boolean = true,
+    runInBackground: Boolean,
+    operationHandle: OperationHandle,
     sessionManager: LivyThriftSessionManager)
-  extends Operation(sessionHandle, OperationType.EXECUTE_STATEMENT)
+  extends Operation(sessionHandle, operationHandle, OperationType.EXECUTE_STATEMENT)
     with Logging {
 
   /**
@@ -56,12 +61,39 @@ class LivyExecuteStatementOperation(
     // This call is blocking, we are waiting for the session to be ready.
     new RpcClient(sessionManager.getLivySession(sessionHandle))
   }
-  private var rowOffset = 0L
 
   private def statementId: String = opHandle.getHandleIdentifier.toString
 
   private def rpcClientValid: Boolean =
     sessionManager.livySessionState(sessionHandle) == CREATION_SUCCESS && rpcClient.isValid
+
+  def this(
+      sessionHandle: SessionHandle,
+      statement: String,
+      runInBackground: Boolean = true,
+      sessionManager: LivyThriftSessionManager) = {
+    this(
+      sessionHandle,
+      statement,
+      runInBackground,
+      new OperationHandle(OperationType.EXECUTE_STATEMENT, sessionHandle.getProtocolVersion),
+      sessionManager)
+  }
+
+  def this(
+      sessionHandle: SessionHandle,
+      sessionManager: LivyThriftSessionManager,
+      metadata: StatementRecoveryMetadata) = {
+    this(
+      sessionHandle,
+      metadata.statement,
+      metadata.runInBackground,
+      metadata.operationHandle,
+      sessionManager
+    )
+    setState(OperationState.RUNNING)
+    setState(OperationState.FINISHED)
+  }
 
   override def getNextRowSet(order: FetchOrientation, maxRowsL: Long): ThriftResultSet = {
     validateFetchOrientation(order)
@@ -71,10 +103,7 @@ class LivyExecuteStatementOperation(
     // maxRowsL here typically maps to java.sql.Statement.getFetchSize, which is an int
     val maxRows = maxRowsL.toInt
     val resultSet = rpcClient.fetchResult(sessionHandle, statementId, maxRows).get()
-    val livyColumnResultSet = ThriftResultSet(resultSet)
-    livyColumnResultSet.setRowOffset(rowOffset)
-    rowOffset += livyColumnResultSet.numRows
-    livyColumnResultSet
+    ThriftResultSet(resultSet)
   }
 
   override def runInternal(): Unit = {
@@ -149,6 +178,10 @@ class LivyExecuteStatementOperation(
         throw new HiveSQLException(e)
     }
     setState(OperationState.FINISHED)
+
+    sessionManager.sessionStore.saveStatement(
+      sessionManager.livySessionId(sessionHandle).get,
+      recoveryMetaData())
   }
 
   def close(): Unit = {
@@ -185,6 +218,8 @@ class LivyExecuteStatementOperation(
         warn(s"Fail to cleanup query $statementId (session = ${sessionHandle.getSessionId}), " +
           "this message can be ignored if the query failed.")
       }
+      sessionManager.sessionStore.removeStatement(
+        sessionManager.livySessionId(sessionHandle).get, statementId)
     }
     setState(state)
   }
@@ -209,5 +244,32 @@ class LivyExecuteStatementOperation(
     val res = new mutable.ListBuffer[String]
     while (fetchNext(res)) {}
     res
+  }
+
+  def recoveryMetaData() : StatementRecoveryMetadata = {
+    StatementRecoveryMetadata(
+      sessionManager.livySessionId(sessionHandle).get,
+      statement,
+      runInBackground,
+      operationHandle.getHandleIdentifier.getPublicId,
+      operationHandle.getHandleIdentifier.getSecretId)
+  }
+}
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+case class StatementRecoveryMetadata(
+   id: Int,
+   statement: String,
+   runInBackground: Boolean = true,
+   publicId: UUID,
+   secretId: UUID)
+  extends RecoveryMetadata {
+
+  def operationHandle: OperationHandle = {
+    val tHandle = new TOperationHandle(
+      new HandleIdentifier(publicId, secretId).toTHandleIdentifier,
+      TOperationType.EXECUTE_STATEMENT,
+      true)
+    new OperationHandle(tHandle)
   }
 }
