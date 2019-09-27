@@ -48,7 +48,9 @@ object ThriftResultSet {
   }
 
   def apply(resultSet: ResultSet): ThriftResultSet = {
-    new ColumnOrientedResultSet(resultSet.getColumns)
+    val rs = new ColumnOrientedResultSet(resultSet.getColumns)
+    rs.setRowOffset(resultSet.getRowOffset)
+    rs
   }
 
   def toTColumn(columnBuffer: ColumnBuffer): TColumn = {

@@ -39,15 +39,26 @@ public class ResultSet {
 
   private final ColumnBuffer[] columns;
 
+  private final long rowOffset;
+
   public ResultSet() {
-    this.columns = null;
+    this(null, 0);
   }
 
   public ResultSet(DataType[] types) {
-    this.columns = new ColumnBuffer[types.length];
-    for (int i = 0; i < columns.length; i++) {
-      columns[i] = new ColumnBuffer(types[i]);
+    this(types, 0);
+  }
+
+  public ResultSet(DataType[] types, long rowOffset) {
+    if (types != null) {
+      this.columns = new ColumnBuffer[types.length];
+      for (int i = 0; i < columns.length; i++) {
+        columns[i] = new ColumnBuffer(types[i]);
+      }
+    } else {
+      columns = null;
     }
+    this.rowOffset = rowOffset;
   }
 
   public void addRow(Object[] fields) {
@@ -68,6 +79,10 @@ public class ResultSet {
 
   public ColumnBuffer[] getColumns() {
     return columns;
+  }
+
+  public long getRowOffset() {
+    return rowOffset;
   }
 
   /**
