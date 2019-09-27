@@ -49,7 +49,7 @@ public class FetchResultJob implements Job<ResultSet> {
     StatementState st = session.findStatement(statementId);
     Iterator<Row> iter = st.iter;
 
-    ResultSet rs = new ResultSet(st.types);
+    ResultSet rs = new ResultSet(st.types, st.getOffset());
     int count = 0;
     while (iter.hasNext() && count < maxRows) {
       Row row = iter.next();
@@ -61,7 +61,8 @@ public class FetchResultJob implements Job<ResultSet> {
       count++;
     }
 
+    st.addOffset(count);
+
     return rs;
   }
-
 }
