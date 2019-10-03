@@ -22,6 +22,7 @@ import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.StructType;
@@ -88,6 +89,18 @@ class ThriftSessionState {
     StatementState state = new StatementState(schema, results);
     if (statements.putIfAbsent(statementId, state) != null) {
       throw new IllegalStateException(
+              String.format("Statement %s already registered.", statementId));
+    }
+  }
+
+  void registerStatement(String statementId,
+                         StructType schema,
+                         Iterator<Row> results,
+                         JavaRDD<Row> persistRDD) {
+    checkNotNull(statementId, "No statement ID.");
+    StatementState state = new StatementState(schema, results, persistRDD);
+    if (statements.putIfAbsent(statementId, state) != null) {
+      throw new IllegalStateException(
         String.format("Statement %s already registered.", statementId));
     }
   }
@@ -103,6 +116,10 @@ class ThriftSessionState {
 
   boolean cleanupStatement(String statementId) {
     checkNotNull(statementId, "No statement ID.");
+    StatementState state = statements.get(statementId);
+    if (state != null && state.persistRDD != null) {
+      state.persistRDD.unpersist();
+    }
     if (statements.remove(statementId) == null) {
       return false;
     } else {

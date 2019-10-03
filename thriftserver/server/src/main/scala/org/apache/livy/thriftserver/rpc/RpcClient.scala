@@ -20,6 +20,7 @@ package org.apache.livy.thriftserver.rpc
 import org.apache.hive.service.cli.SessionHandle
 
 import org.apache.livy._
+import org.apache.livy.rsc.RSCConf
 import org.apache.livy.server.interactive.InteractiveSession
 import org.apache.livy.thriftserver.session._
 
@@ -50,7 +51,8 @@ class RpcClient(livySession: InteractiveSession) extends Logging {
       statementId,
       statement,
       defaultIncrementalCollect,
-      s"spark.${LivyConf.THRIFT_INCR_COLLECT_ENABLED}"))
+      s"spark.${LivyConf.THRIFT_INCR_COLLECT_ENABLED}",
+      livySession.livyConf.getInt(RSCConf.Entry.THRIFT_COLLECT_RDD_BATCH_SIZE)));
   }
 
   @throws[Exception]

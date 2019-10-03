@@ -19,6 +19,7 @@ package org.apache.livy.thriftserver.session;
 
 import java.util.Iterator;
 
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.types.StructType;
 
@@ -30,10 +31,16 @@ class StatementState {
   final String schema;
   final Iterator<Row> iter;
   final DataType[] types;
+  final JavaRDD<Row> persistRDD;
 
   StatementState(StructType schema, Iterator<Row> iter) {
+    this(schema, iter, null);
+  }
+
+  StatementState(StructType schema, Iterator<Row> iter, JavaRDD<Row> persistRDD) {
     this.schema = schema.json();
     this.iter = iter;
     this.types = SparkUtils.translateSchema(schema);
+    this.persistRDD = persistRDD;
   }
 }
