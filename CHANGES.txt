@@ -1,0 +1,3 @@
+[in house changes]
+
+LIVY-667 Collect a part of partition to the driver by batch to avoid OOM
