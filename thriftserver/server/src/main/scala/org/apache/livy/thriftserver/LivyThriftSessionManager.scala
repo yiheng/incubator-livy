@@ -309,8 +309,8 @@ class LivyThriftSessionManager(
   }
 
   def closeSession(sessionHandle: SessionHandle): Unit = {
-    val removedSession = sessionHandleToLivySession.remove(sessionHandle)
     livySessionId(sessionHandle).map(sessionStore.remove(_, sessionHandle))
+    val removedSession = sessionHandleToLivySession.remove(sessionHandle)
     val removedSessionInfo = sessionInfo.remove(sessionHandle)
     try {
       removedSession.value match {
