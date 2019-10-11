@@ -22,15 +22,15 @@ import java.util.{Map => JMap}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.mutable
-
 import org.apache.hive.service.cli._
-
 import org.apache.livy.{LivyConf, Logging}
 import org.apache.livy.thriftserver.operation._
+import org.apache.livy.thriftserver.recovery.LivyThriftSessionStore
 import org.apache.livy.thriftserver.serde.ThriftResultSet
 import org.apache.livy.thriftserver.session.DataType
 
-class LivyOperationManager(val livyThriftSessionManager: LivyThriftSessionManager)
+class LivyOperationManager(
+    val livyThriftSessionManager: LivyThriftSessionManager, sessionStore: LivyThriftSessionStore)
   extends Logging {
 
   private val handleToOperation = new ConcurrentHashMap[OperationHandle, Operation]()
@@ -40,7 +40,14 @@ class LivyOperationManager(val livyThriftSessionManager: LivyThriftSessionManage
   private val operationTimeout =
     livyThriftSessionManager.livyConf.getTimeAsMs(LivyConf.THRIFT_IDLE_OPERATION_TIMEOUT)
 
-  private def addOperation(operation: Operation, sessionHandle: SessionHandle): Unit = {
+  private[thriftserver] def addOperation(
+      operation: Operation,
+      sessionHandle: SessionHandle): Unit = {
+    if (operation.opType == OperationType.EXECUTE_STATEMENT) {
+      sessionStore.saveStatement(
+        livyThriftSessionManager.livySessionId(sessionHandle).get,
+        operation.asInstanceOf[LivyExecuteStatementOperation].recoveryMetaData())
+    }
     handleToOperation.put(operation.opHandle, operation)
     sessionToOperationHandles.synchronized {
       val set = sessionToOperationHandles.getOrElseUpdate(sessionHandle,
@@ -51,6 +58,12 @@ class LivyOperationManager(val livyThriftSessionManager: LivyThriftSessionManage
 
   @throws[HiveSQLException]
   private def removeOperation(operationHandle: OperationHandle): Operation = {
+    if (operationHandle.getOperationType == OperationType.EXECUTE_STATEMENT) {
+      val operation = handleToOperation.get(operationHandle)
+      val livySessionId = livyThriftSessionManager.livySessionId(operation.sessionHandle).get
+      sessionStore.removeStatement(livySessionId, operationHandle)
+    }
+
     val operation = handleToOperation.remove(operationHandle)
     if (operation == null) {
       throw new HiveSQLException(s"Operation does not exist: $operationHandle")

@@ -22,7 +22,7 @@ import java.io.IOException
 import org.apache.hive.service.cli.{OperationHandle, SessionHandle}
 import org.apache.livy.{LivyConf, Logging}
 import org.apache.livy.server.recovery.StateStore
-import org.apache.livy.thriftserver.ThriftSessionRecoveryMetadata
+import org.apache.livy.thriftserver.{StatementOperationRecoveryMetadata, ThriftSessionRecoveryMetadata}
 
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
@@ -36,20 +36,24 @@ class LivyThriftSessionStore(
 
   def save(
       livySessionId: Int,
-      thriftSession: SessionHandle,
       metaData: ThriftSessionRecoveryMetadata): Unit = {
-    store.set(sessionPath(livySessionId, thriftSession), metaData)
+    store.set(thriftSessionMetaDataPath(livySessionId), metaData)
   }
 
-  def remove(livySessionId: Int, thriftSession: SessionHandle): Unit = {
-    store.remove(sessionPath(livySessionId, thriftSession))
+  def remove(livySessionId: Int): Unit = {
+    store.remove(thriftSessionPath(livySessionId))
+  }
+
+  def removeStatement(livySessionId: Int, operationHandle: OperationHandle): Unit = {
+    store.remove(statementPath(livySessionId,
+      operationHandle.getHandleIdentifier.getPublicId.toString))
   }
 
   def getAllSessions(): Seq[Try[ThriftSessionRecoveryMetadata]] = {
-    store.getChildren(sessionPath)
+    store.getChildren(thriftSessionPath)
       .flatMap { c => Try(c.toInt).toOption }
       .flatMap { id =>
-        store.getChildren(sessionPath(id)).map { d => s"${sessionPath(id)}/$d" }
+        store.getChildren(thriftSessionPath(id)).map { d => s"${thriftSessionPath(id)}/$d" }
       }.flatMap { path =>
         try {
           store.get[ThriftSessionRecoveryMetadata](path).map(Success(_))
@@ -59,19 +63,42 @@ class LivyThriftSessionStore(
       }
   }
 
-  def saveOperation(thriftSession: SessionHandle, operation: OperationHandle): Unit = {
-
+  def getStatements(livySessionId: Int): Seq[Try[StatementOperationRecoveryMetadata]] = {
+    store.getChildren(statementPath(livySessionId))
+      .flatMap { statementId =>
+        try {
+          store.get[StatementOperationRecoveryMetadata](
+            statementPath(livySessionId, statementId)).map(Success(_))
+        } catch {
+          case NonFatal(e) => Some(Failure(
+            new IOException(
+              s"Error getting session ${statementPath(livySessionId, statementId)}",
+              e)))
+        }
+      }
   }
 
-  private def sessionPath: String =
+  def saveStatement(
+      livySessionId: Int,
+      metadata: StatementOperationRecoveryMetadata): Unit = {
+    store.set(statementPath(livySessionId, metadata.publicId.toString), metadata)
+  }
+
+  private def thriftSessionPath: String =
     s"$STORE_VERSION/thrift"
 
-  private def sessionPath(id: Int): String =
+  private def thriftSessionPath(id: Int): String =
     s"$STORE_VERSION/thrift/$id"
 
-  private def sessionPath(id: Int, thriftSession: SessionHandle): String = {
-    val publicId = thriftSession.getHandleIdentifier.getPublicId
-    val secretId = thriftSession.getHandleIdentifier.getSecretId
-    s"$STORE_VERSION/thrift/$id/$publicId-$secretId"
+  private def thriftSessionMetaDataPath(id: Int): String = {
+    s"$STORE_VERSION/thrift/$id/metadata"
+  }
+
+  private def statementPath(id: Int): String = {
+    s"$STORE_VERSION/thrift/$id/statements"
+  }
+
+  private def statementPath(id: Int, statementId: String): String = {
+    s"$STORE_VERSION/thrift/$id/statements/$statementId"
   }
 }

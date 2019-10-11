@@ -30,10 +30,19 @@ class StatementState {
   final String schema;
   final Iterator<Row> iter;
   final DataType[] types;
+  private long offset = 0L;
 
   StatementState(StructType schema, Iterator<Row> iter) {
     this.schema = schema.json();
     this.iter = iter;
     this.types = SparkUtils.translateSchema(schema);
+  }
+
+  public long getOffset() {
+    return offset;
+  }
+
+  public void addOffset(long offset) {
+    this.offset += offset;
   }
 }

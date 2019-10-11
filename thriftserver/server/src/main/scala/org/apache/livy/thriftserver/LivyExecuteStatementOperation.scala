@@ -18,15 +18,18 @@
 package org.apache.livy.thriftserver
 
 import java.security.PrivilegedExceptionAction
+import java.util
 import java.util.concurrent.{ConcurrentLinkedQueue, RejectedExecutionException}
+import java.util.UUID
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 import scala.collection.mutable
 import scala.util.control.NonFatal
-
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.hive.service.cli._
-
 import org.apache.livy.Logging
+import org.apache.livy.sessions.Session.RecoveryMetadata
 import org.apache.livy.thriftserver.SessionStates._
 import org.apache.livy.thriftserver.operation.Operation
 import org.apache.livy.thriftserver.rpc.RpcClient
@@ -36,9 +39,10 @@ import org.apache.livy.thriftserver.types.{BasicDataType, DataTypeUtils, Field, 
 class LivyExecuteStatementOperation(
     sessionHandle: SessionHandle,
     statement: String,
-    runInBackground: Boolean = true,
+    runInBackground: Boolean,
+    operationHandle: OperationHandle,
     sessionManager: LivyThriftSessionManager)
-  extends Operation(sessionHandle, OperationType.EXECUTE_STATEMENT)
+  extends Operation(sessionHandle, operationHandle, OperationType.EXECUTE_STATEMENT)
     with Logging {
 
   /**
@@ -56,12 +60,24 @@ class LivyExecuteStatementOperation(
     // This call is blocking, we are waiting for the session to be ready.
     new RpcClient(sessionManager.getLivySession(sessionHandle))
   }
-  private var rowOffset = 0L
 
   private def statementId: String = opHandle.getHandleIdentifier.toString
 
   private def rpcClientValid: Boolean =
     sessionManager.livySessionState(sessionHandle) == CREATION_SUCCESS && rpcClient.isValid
+
+  def this(
+      sessionHandle: SessionHandle,
+      statement: String,
+      runInBackground: Boolean = true,
+      sessionManager: LivyThriftSessionManager) = {
+    this(
+      sessionHandle,
+      statement,
+      runInBackground,
+      new OperationHandle(OperationType.EXECUTE_STATEMENT, sessionHandle.getProtocolVersion),
+      sessionManager)
+  }
 
   override def getNextRowSet(order: FetchOrientation, maxRowsL: Long): ThriftResultSet = {
     validateFetchOrientation(order)
@@ -71,10 +87,7 @@ class LivyExecuteStatementOperation(
     // maxRowsL here typically maps to java.sql.Statement.getFetchSize, which is an int
     val maxRows = maxRowsL.toInt
     val resultSet = rpcClient.fetchResult(sessionHandle, statementId, maxRows).get()
-    val livyColumnResultSet = ThriftResultSet(resultSet)
-    livyColumnResultSet.setRowOffset(rowOffset)
-    rowOffset += livyColumnResultSet.numRows
-    livyColumnResultSet
+    ThriftResultSet(resultSet)
   }
 
   override def runInternal(): Unit = {
@@ -201,4 +214,22 @@ class LivyExecuteStatementOperation(
     while (fetchNext(res)) {}
     res
   }
+
+  def recoveryMetaData() : StatementOperationRecoveryMetadata = {
+    StatementOperationRecoveryMetadata(
+      sessionManager.livySessionId(sessionHandle).get,
+      statement,
+      runInBackground,
+      operationHandle.getHandleIdentifier.getPublicId,
+      operationHandle.getHandleIdentifier.getSecretId)
+  }
 }
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+case class StatementOperationRecoveryMetadata(
+   id: Int,
+   statement: String,
+   runInBackground: Boolean = true,
+   publicId: UUID,
+   secretId:UUID)
+  extends RecoveryMetadata

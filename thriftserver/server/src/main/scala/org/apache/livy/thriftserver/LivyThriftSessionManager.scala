@@ -33,8 +33,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.util.{Failure, Success, Try}
 import org.apache.hadoop.security.UserGroupInformation
-import org.apache.hive.service.cli.{HandleIdentifier, HiveSQLException, SessionHandle}
-import org.apache.hive.service.rpc.thrift.TProtocolVersion
+import org.apache.hive.service.cli.{HandleIdentifier, HiveSQLException, OperationHandle, SessionHandle}
+import org.apache.hive.service.rpc.thrift.{THandleIdentifier, TOperationHandle, TOperationType, TProtocolVersion}
 import org.apache.hive.service.server.ThreadFactoryWithGarbageCleanup
 import org.apache.livy.LivyConf
 import org.apache.livy.Logging
@@ -53,7 +53,7 @@ class LivyThriftSessionManager(
     sessionStore: LivyThriftSessionStore)
   extends ThriftService(classOf[LivyThriftSessionManager].getName) with Logging {
 
-  private[thriftserver] val operationManager = new LivyOperationManager(this)
+  private[thriftserver] val operationManager = new LivyOperationManager(this, sessionStore)
   private val sessionHandleToLivySession =
     new ConcurrentHashMap[SessionHandle, Future[InteractiveSession]]()
   // A map which returns how many incoming connections are open for a Livy session.
@@ -190,6 +190,31 @@ class LivyThriftSessionManager(
     val userNum = managedLivySessionActiveUsers.getOrElseUpdate(metaData.id, 0)
     managedLivySessionActiveUsers.put(metaData.id, userNum + 1)
     incrementConnections(metaData.userName, metaData.ipAddress, metaData.forwardedAddresses)
+
+    val statementsMetaData = sessionStore.getStatements(metaData.id)
+    statementsMetaData.flatMap(_.toOption).foreach(m => statementRecovery(sessionHandle, m, this))
+    // Print recovery error.
+    val recoveryFailure = statementsMetaData.filter(_.isFailure).map(_.failed.get)
+    recoveryFailure.foreach(ex => error(ex.getMessage, ex.getCause))
+  }
+
+  private def statementRecovery(
+      sessionHandle: SessionHandle,
+      metadata: StatementOperationRecoveryMetadata,
+      sessionManager: LivyThriftSessionManager): Unit = {
+    val tHandle = new TOperationHandle(
+      new HandleIdentifier(metadata.publicId, metadata.secretId).toTHandleIdentifier,
+      TOperationType.EXECUTE_STATEMENT,
+      true)
+    val operationHandle = new OperationHandle(tHandle)
+    operationHandle.toTOperationHandle
+    val operation = new LivyExecuteStatementOperation(
+      sessionHandle,
+      metadata.statement,
+      metadata.runInBackground,
+      operationHandle,
+      sessionManager)
+    operationManager.addOperation(operation, sessionHandle)
   }
 
   /**
@@ -302,14 +327,13 @@ class LivyThriftSessionManager(
           throw new ThriftSessionCreationException(Option(livySession), e)
       }
     }
-    sessionStore.save(livySessionId, sessionHandle,
-      getThriftSessionMetadata(livySessionId, sessionHandle))
+    sessionStore.save(livySessionId, getThriftSessionMetadata(livySessionId, sessionHandle))
     sessionHandleToLivySession.put(sessionHandle, futureLivySession)
     sessionHandle
   }
 
   def closeSession(sessionHandle: SessionHandle): Unit = {
-    livySessionId(sessionHandle).map(sessionStore.remove(_, sessionHandle))
+    livySessionId(sessionHandle).map(sessionStore.remove(_))
     val removedSession = sessionHandleToLivySession.remove(sessionHandle)
     val removedSessionInfo = sessionInfo.remove(sessionHandle)
     try {
