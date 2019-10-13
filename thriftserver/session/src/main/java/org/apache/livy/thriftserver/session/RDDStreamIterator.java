@@ -70,15 +70,22 @@ public class RDDStreamIterator<T> implements Iterator<T> {
         this.curPartitionIndex = 0;
         this.maxPartitionIndex = this.rdd.getNumPartitions() - 1;
         this.curRowIndex = 0;
-        this.partitionSizeList = this.rdd.mapPartitions(iter -> {
-            int count = 0;
-            while(iter.hasNext()) {
-                iter.next();
-                count ++;
-            }
-            return Collections.singleton(count).iterator();
-        }).collect();
+        this.partitionSizeList = null;
         iter = (new ArrayList<T>()).iterator();
+    }
+
+    private int getPartitionSize(int index) {
+        if(this.partitionSizeList == null) {
+            this.partitionSizeList = this.rdd.mapPartitions(iter -> {
+                int count = 0;
+                while(iter.hasNext()) {
+                    iter.next();
+                    count ++;
+                }
+                return Collections.singleton(count).iterator();
+            }).collect();
+        }
+        return this.partitionSizeList.get(index);
     }
 
     private Iterator<T> collectPartitionByBatch() {
@@ -99,7 +106,7 @@ public class RDDStreamIterator<T> implements Iterator<T> {
         }
 
         if (curPartitionIndex == maxPartitionIndex &&
-                curRowIndex >= partitionSizeList.get(curPartitionIndex)) {
+                curRowIndex >= getPartitionSize(curPartitionIndex)) {
             return true;
         }
 
@@ -128,7 +135,7 @@ public class RDDStreamIterator<T> implements Iterator<T> {
         }
 
         iter = collectPartitionByBatch();
-        if (curRowIndex + batchSize >= partitionSizeList.get(curPartitionIndex)) {
+        if (curRowIndex + batchSize >= getPartitionSize(curPartitionIndex)) {
             curPartitionIndex = curPartitionIndex + 1;
             curRowIndex = 0;
         } else {
