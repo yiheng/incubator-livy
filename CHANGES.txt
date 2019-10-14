@@ -2,3 +2,4 @@
 
 LIVY-667 Collect a part of partition to the driver by batch to avoid OOM
 LIVY-667 rdd triger action when call hasNext or next
+LIVY-697 Fix Rsc client cannot resolve the hostname of driver in yarn-cluster mode
