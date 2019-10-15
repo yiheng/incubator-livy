@@ -3,3 +3,7 @@
 LIVY-667 Collect a part of partition to the driver by batch to avoid OOM
 LIVY-667 rdd triger action when call hasNext or next
 LIVY-697 Fix Rsc client cannot resolve the hostname of driver in yarn-cluster mode
+18c972c31f953 Get job process message to the end user using thriftserver
+2cd2f6a04b092 [LIVY-689] Deliver stage process message to the end user using thriftserver
+cb277f651eafa [LIVY-678] Thrift ldap authentication, based on ldapurl, basedn, domain
+f6ee063458828 [LIVY-356][SERVER]Add LDAP authentication for livy-server.
