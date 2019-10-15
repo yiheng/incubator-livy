@@ -86,7 +86,7 @@ public class RSCConf extends ClientConf<RSCConf> {
     // Number of result rows to get for SQL Interpreters.
     SQL_NUM_ROWS("sql.num-rows", 1000),
 
-    THRIFT_COLLECT_RDD_BATCH_SIZE("thrift.collect.rdd.batch.size", 1000);
+    THRIFT_COLLECT_RDD_BATCH_SIZE("thrift.collect.rdd.batch.size", 10000);
 
     private final String key;
     private final Object dflt;
