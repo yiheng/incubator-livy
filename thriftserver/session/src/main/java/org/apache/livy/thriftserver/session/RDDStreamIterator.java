@@ -59,22 +59,28 @@ public class RDDStreamIterator<T> implements Iterator<T> {
     private JavaRDD<T> rdd;
     private Integer batchSize;
     private Integer curPartitionIndex;
-    private Integer maxPartitionIndex;
-    private Integer curRowIndex;
+    // the index of elements waiting to be fetched in current partition
+    private Integer waitingFetchedItemIndexInPartition;
     private List<Integer> partitionSizeList;
     private Iterator<T> iter;
+    // the num of elements in rdd
+    private Long totalItemNum;
+    // the num of elements return by next()
+    private Long currItemNum;
 
     public RDDStreamIterator(JavaRDD<T> rdd, Integer batchSize) {
         this.rdd = rdd;
         this.batchSize = batchSize;
         this.curPartitionIndex = 0;
-        this.maxPartitionIndex = this.rdd.getNumPartitions() - 1;
-        this.curRowIndex = 0;
+        this.waitingFetchedItemIndexInPartition = 0;
         this.partitionSizeList = null;
         iter = (new ArrayList<T>()).iterator();
+        this.totalItemNum = 0L;
+        this.currItemNum = 0L;
+
     }
 
-    private int getPartitionSize(int index) {
+    private void collectPartitionSize() {
         if(this.partitionSizeList == null) {
             this.partitionSizeList = this.rdd.mapPartitions(iter -> {
                 int count = 0;
@@ -84,14 +90,17 @@ public class RDDStreamIterator<T> implements Iterator<T> {
                 }
                 return Collections.singleton(count).iterator();
             }).collect();
+            for (int i = 0; i < this.partitionSizeList.size(); i ++) {
+                this.totalItemNum = this.totalItemNum + this.partitionSizeList.get(i);
+            }
         }
-        return this.partitionSizeList.get(index);
     }
 
     private Iterator<T> collectPartitionByBatch() {
         List<Integer> partitions = Arrays.asList(curPartitionIndex);
         List<T>[] batches = (List<T>[])rdd.context().runJob(rdd.rdd(),
-                new PartitionSampleFunction<T>(curRowIndex, curRowIndex + batchSize),
+                new PartitionSampleFunction<T>(waitingFetchedItemIndexInPartition,
+                        waitingFetchedItemIndexInPartition + batchSize),
                 (scala.collection.Seq) JavaConversions.asScalaBuffer(partitions),
                 scala.reflect.ClassTag$.MODULE$.apply(List.class));
         if (batches.length == 0) {
@@ -101,16 +110,10 @@ public class RDDStreamIterator<T> implements Iterator<T> {
     }
 
     private boolean isIndexOutOfBound() {
-        if (curPartitionIndex > maxPartitionIndex) {
-            return true;
+        if(this.partitionSizeList == null) {
+            collectPartitionSize();
         }
-
-        if (curPartitionIndex == maxPartitionIndex &&
-                curRowIndex >= getPartitionSize(curPartitionIndex)) {
-            return true;
-        }
-
-        return false;
+        return currItemNum >= totalItemNum;
     }
 
     public boolean hasNext() {
@@ -127,6 +130,7 @@ public class RDDStreamIterator<T> implements Iterator<T> {
 
     public T next() {
         if (iter.hasNext()) {
+            currItemNum ++;
             return iter.next();
         }
 
@@ -134,14 +138,22 @@ public class RDDStreamIterator<T> implements Iterator<T> {
             throw new NoSuchElementException();
         }
 
-        iter = collectPartitionByBatch();
-        if (curRowIndex + batchSize >= getPartitionSize(curPartitionIndex)) {
-            curPartitionIndex = curPartitionIndex + 1;
-            curRowIndex = 0;
-        } else {
-            curRowIndex = curRowIndex + batchSize;
+        // use while to avoid some paritition is empty and collectPartitionByBatch return empty iter
+        while (!iter.hasNext()) {
+            iter = collectPartitionByBatch();
+            if (batchSize >=
+                    partitionSizeList.get(curPartitionIndex) - waitingFetchedItemIndexInPartition) {
+                // batchSize exceeds the the num of left elements of current partition,
+                // so move to next partition and reset waitingFetchedItemIndexInPartition
+                curPartitionIndex = curPartitionIndex + 1;
+                waitingFetchedItemIndexInPartition = 0;
+            } else {
+                // continue to get elements from current partition
+                waitingFetchedItemIndexInPartition = waitingFetchedItemIndexInPartition + batchSize;
+            }
         }
 
+        currItemNum ++;
         return iter.next();
     }
 
