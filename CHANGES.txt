@@ -1,9 +1,10 @@
 [in house changes]
-
-LIVY-667 Collect a part of partition to the driver by batch to avoid OOM
-LIVY-667 rdd triger action when call hasNext or next
-LIVY-697 Fix Rsc client cannot resolve the hostname of driver in yarn-cluster mode
-18c972c31f953 Get job process message to the end user using thriftserver
-2cd2f6a04b092 [LIVY-689] Deliver stage process message to the end user using thriftserver
-cb277f651eafa [LIVY-678] Thrift ldap authentication, based on ldapurl, basedn, domain
-f6ee063458828 [LIVY-356][SERVER]Add LDAP authentication for livy-server.
+1f2c7f8d Collect a part of partition to the driver by batch to avoid OOM
+54bd1068 rdd triger action when call hasNext or next
+1535a89b Fix Rsc client cannot resolve the hostname of driver in yarn-cluster mode
+5355b5b3 change thrift.collect.rdd.batch.size from 1000 to 10000
+78a74a80 [LIVY-667] Fix next() throw Exception when some partition is empty
+18c972c3 Get job process message to the end user using thriftserver
+2cd2f6a0 [LIVY-689] Deliver stage process message to the end user using thriftserver
+cb277f65 [LIVY-678] Thrift ldap authentication, based on ldapurl, basedn, domain
+f6ee0634 [LIVY-356][SERVER]Add LDAP authentication for livy-server.
