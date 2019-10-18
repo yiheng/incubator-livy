@@ -29,6 +29,11 @@
   <groupId>org.apache.livy</groupId>
   <artifactId>livy-thriftserver-session</artifactId>
 
+
+  <properties>
+      <thive.version>1.0.3</thive.version>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>${project.groupId}</groupId>
@@ -88,6 +93,14 @@
                   <groupId>${project.groupId}</groupId>
                   <artifactId>livy-thriftserver-session</artifactId>
                   <version>${project.version}</version>
+                  <type>jar</type>
+                  <overWrite>true</overWrite>
+                  <outputDirectory>${project.build.directory}/jars</outputDirectory>
+                </artifactItem>
+                <artifactItem>
+                  <groupId>supersql.tdw</groupId>
+                  <artifactId>tdw-shaded</artifactId>
+                  <version>${thive.version}</version>
                   <type>jar</type>
                   <overWrite>true</overWrite>
                   <outputDirectory>${project.build.directory}/jars</outputDirectory>
