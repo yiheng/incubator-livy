@@ -140,6 +140,8 @@ class LivyExecuteStatementOperation(
     try {
       operationMessages.foreach(_.offer(s"RSC client is executing SQL query: $statement, " +
         s"statementId = $statementId, session = " + sessionHandle))
+      val livySession = sessionManager.getLivySession(sessionHandle)
+      operationMessages.foreach(_.offer(s"tracking URL: ${livySession.appInfo.sparkUiUrl.orNull}"))
       rpcClient.executeSql(sessionHandle, statementId, statement).get()
     } catch {
       case e: Throwable =>

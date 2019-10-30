@@ -259,8 +259,6 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
               }
             }
             initSession(sessionHandle, livySession, initStatements)
-            operationMessages.foreach(
-              _.offer(s"tracking URL: ${livySession.appInfo.sparkUiUrl.orNull}"))
             livySession
           }
         })
