@@ -14,28 +14,33 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.livy.server.recovery
 
-import scala.reflect.ClassTag
+package org.apache.livy.server.nodes
 
-import org.apache.livy.{LivyConf, Logging}
+import org.apache.livy.server.JsonServlet
+import org.apache.livy.sessions.Session.RecoveryMetadata
+import org.apache.livy.sessions.{Session, SessionManager}
 
-class ZooKeeperStateStore(livyConf: LivyConf) extends StateStore(livyConf) {
-  require(ZooKeeperManager.get != null)
+/**
+ * Base servlet for getting all nodes info of livy server
+ */
+class NodesServlet[S <: Session, R <: RecoveryMetadata](
+    private[livy] val sessionManager: SessionManager[S, R]) extends JsonServlet {
 
-  override def set(key: String, value: Object): Unit = {
-    ZooKeeperManager.get.set(key, value)
+  override def shutdown(): Unit = {
+    sessionManager.shutdown()
   }
 
-  override def get[T: ClassTag](key: String): Option[T] = {
-    ZooKeeperManager.get.get(key)
+  before() {
+    contentType = "application/json"
   }
 
-  override def getChildren(key: String): Seq[String] = {
-    ZooKeeperManager.get.getChildren(key)
+  get("/nodes") {
+    if(sessionManager.serviceWatch.isDefined) {
+      Map("nodes" -> sessionManager.serviceWatch.get.getNodes)
+    } else {
+      Map("nodes" -> Set(s"${request.getServerName}:${request.getServerPort}"))
+    }
   }
 
-  override def remove(key: String): Unit = {
-    ZooKeeperManager.get.remove(key)
-  }
 }

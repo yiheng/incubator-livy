@@ -30,6 +30,7 @@ import org.apache.hive.service.rpc.thrift.{TOperationHandle, TProtocolVersion}
 import org.apache.livy.{LIVY_VERSION, LivyConf, Logging}
 import org.apache.livy.thriftserver.auth.AuthFactory
 import org.apache.livy.thriftserver.operation.{Operation, OperationStatus}
+import org.apache.livy.thriftserver.recovery.ThriftSessionStore
 import org.apache.livy.thriftserver.serde.ThriftResultSet
 import org.apache.livy.thriftserver.types.Schema
 
@@ -44,7 +45,8 @@ class LivyCLIService(server: LivyThriftServer)
   private var maxTimeout: Long = _
 
   override def init(livyConf: LivyConf): Unit = {
-    sessionManager = new LivyThriftSessionManager(server, livyConf)
+    sessionManager = new LivyThriftSessionManager(server, livyConf,
+      new ThriftSessionStore(livyConf))
     addService(sessionManager)
     defaultFetchRows = livyConf.getInt(LivyConf.THRIFT_RESULTSET_DEFAULT_FETCH_SIZE)
     maxTimeout = livyConf.getTimeAsMs(LivyConf.THRIFT_LONG_POLLING_TIMEOUT)

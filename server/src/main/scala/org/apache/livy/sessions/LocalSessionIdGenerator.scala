@@ -14,28 +14,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.livy.server.recovery
 
-import scala.reflect.ClassTag
+package org.apache.livy.sessions
 
-import org.apache.livy.{LivyConf, Logging}
+import java.util.concurrent.atomic.AtomicInteger
 
-class ZooKeeperStateStore(livyConf: LivyConf) extends StateStore(livyConf) {
-  require(ZooKeeperManager.get != null)
+import org.apache.livy.server.recovery.SessionStore
 
-  override def set(key: String, value: Object): Unit = {
-    ZooKeeperManager.get.set(key, value)
+class LocalSessionIdGenerator(
+    sessionType: String,
+    sessionStore: SessionStore) extends SessionIdGenerator {
+
+  private val idCounter = new AtomicInteger(0)
+
+  def getNextSessionId(): Int = {
+    val result = idCounter.getAndIncrement()
+    sessionStore.saveNextSessionId(sessionType, result + 1)
+    result
   }
 
-  override def get[T: ClassTag](key: String): Option[T] = {
-    ZooKeeperManager.get.get(key)
-  }
-
-  override def getChildren(key: String): Seq[String] = {
-    ZooKeeperManager.get.getChildren(key)
-  }
-
-  override def remove(key: String): Unit = {
-    ZooKeeperManager.get.remove(key)
+  def recover(): Unit = {
+    idCounter.set(sessionStore.getNextSessionId(sessionType))
   }
 }

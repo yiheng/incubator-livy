@@ -31,21 +31,27 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.util.{Failure, Success, Try}
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import org.apache.hadoop.security.UserGroupInformation
-import org.apache.hive.service.cli.{HiveSQLException, SessionHandle}
+import org.apache.hive.service.cli.{HandleIdentifier, HiveSQLException, SessionHandle}
 import org.apache.hive.service.rpc.thrift.TProtocolVersion
 import org.apache.hive.service.server.ThreadFactoryWithGarbageCleanup
 
 import org.apache.livy.{ConcurrentBoundedLinkedQueue, LivyConf, Logging, OperationMessageManager}
 import org.apache.livy.rsc.RSCConf
 import org.apache.livy.server.interactive.{CreateInteractiveRequest, InteractiveSession}
+import org.apache.livy.sessions.Session.RecoveryMetadata
 import org.apache.livy.sessions.Spark
 import org.apache.livy.thriftserver.SessionStates._
+import org.apache.livy.thriftserver.recovery.ThriftSessionStore
 import org.apache.livy.thriftserver.rpc.RpcClient
 import org.apache.livy.utils.LivySparkUtils
 
 
-class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyConf)
+class LivyThriftSessionManager(
+    val server: LivyThriftServer,
+    val livyConf: LivyConf,
+    val sessionStore: ThriftSessionStore)
   extends ThriftService(classOf[LivyThriftSessionManager].getName) with Logging {
 
   private[thriftserver] val operationManager = new LivyOperationManager(this)
@@ -87,6 +93,8 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
 
   private var backgroundOperationPool: ThreadPoolExecutor = _
 
+  recover()
+
   def getLivySession(sessionHandle: SessionHandle): InteractiveSession = {
     val future = sessionHandleToLivySession.get(sessionHandle)
     assert(future != null, s"Looking for not existing session: $sessionHandle.")
@@ -106,7 +114,7 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
   }
 
   def livySessionId(sessionHandle: SessionHandle): Option[Int] = {
-    sessionHandleToLivySession.get(sessionHandle).value.filter(_.isSuccess).map(_.get.id)
+    sessionHandleToLivySession.get(sessionHandle).value.map(_.get.id)
   }
 
   def livySessionState(sessionHandle: SessionHandle): SessionStates = {
@@ -151,6 +159,62 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
         case e: Exception => warn(s"Unable to unregister session $sessionHandle", e)
       }
     }
+  }
+
+  private def recover(): Unit = {
+    val sessionMetadata = sessionStore.getAllSessions()
+    sessionMetadata.flatMap(_.toOption)
+      .filter(r => !server.livySessionManager.contains(r.id))
+      .filter(r => {
+        if (server.livySessionManager.serviceWatch.isDefined) {
+          server.livySessionManager.serviceWatch.get.contains(r.id)
+        } else {
+          true
+        }
+      })
+      .foreach(sessionRecovery)
+
+    // Print recovery error.
+    val recoveryFailure = sessionMetadata.filter(_.isFailure).map(_.failed.get)
+    recoveryFailure.foreach(ex => error(ex.getMessage, ex.getCause))
+  }
+
+  private def sessionRecovery(metaData: ThriftSessionRecoveryMetadata): Unit = {
+    val handleIdentifier = new HandleIdentifier(metaData.publicId, metaData.secretId)
+    val protocolVersion = TProtocolVersion.findByValue(metaData.protocolVersion)
+    val sessionHandle = new SessionHandle(handleIdentifier, protocolVersion)
+    val livySession = server.livySessionManager.get(metaData.id)
+    if (livySession.isEmpty) {
+      error(s"Cannot find livy session (id: ${metaData.id}) " +
+        s"for thrift session ${metaData.publicId}-${metaData.secretId}.")
+      return
+    }
+    sessionHandleToLivySession.put(sessionHandle, Future(livySession.get))
+    sessionInfo.put(sessionHandle, new SessionInfo(
+      metaData.userName,
+      metaData.ipAddress,
+      metaData.forwardedAddresses,
+      createOperationMessages,
+      protocolVersion,
+      metaData.creationTime))
+    info(s"Recovered thrift session ${metaData.publicId}-${metaData.secretId}")
+    val userNum = managedLivySessionActiveUsers.getOrElseUpdate(metaData.id, 0)
+    managedLivySessionActiveUsers.put(metaData.id, userNum + 1)
+    incrementConnections(metaData.userName, metaData.ipAddress, metaData.forwardedAddresses)
+
+    val statementsMetaData = sessionStore.getStatements(metaData.id)
+    statementsMetaData.flatMap(_.toOption).foreach(m => statementRecovery(sessionHandle, m, this))
+    // Print recovery error.
+    val recoveryFailure = statementsMetaData.filter(_.isFailure).map(_.failed.get)
+    recoveryFailure.foreach(ex => error(ex.getMessage, ex.getCause))
+  }
+
+  private def statementRecovery(
+      sessionHandle: SessionHandle,
+      metadata: StatementRecoveryMetadata,
+      sessionManager: LivyThriftSessionManager): Unit = {
+    operationManager.addOperation(
+      new LivyExecuteStatementOperation(sessionHandle, this, metadata), sessionHandle)
   }
 
   /**
@@ -221,19 +285,17 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
     val sessionHandle = new SessionHandle(protocol)
     incrementConnections(username, ipAddress, SessionInfo.getForwardedAddresses)
 
-    val operationMessages = if (livyConf.getBoolean(LivyConf.THRIFT_LOG_OPERATION_ENABLED)) {
-      Some(new ConcurrentBoundedLinkedQueue[String](livyConf.getLong(
-        LivyConf.THRIFT_OPERATION_LOG_MAX_SIZE)))
-    } else None
+    val operationMessages = createOperationMessages
     sessionInfo.put(sessionHandle,
       new SessionInfo(username, ipAddress, SessionInfo.getForwardedAddresses, operationMessages,
         protocol))
     val (initStatements, createInteractiveRequest, sessionId) =
       LivyThriftSessionManager.processSessionConf(sessionConf, supportUseDatabase)
+    val livySessionId = server.livySessionManager.nextId()
     val createLivySession = () => {
       createInteractiveRequest.kind = Spark
       val newSession = InteractiveSession.create(
-        server.livySessionManager.nextId(),
+        livySessionId,
         createInteractiveRequest.name,
         username,
         None,
@@ -269,11 +331,13 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
           throw new ThriftSessionCreationException(Option(livySession), e)
       }
     }
+    sessionStore.saveSession(livySessionId, getThriftSessionMetadata(livySessionId, sessionHandle))
     sessionHandleToLivySession.put(sessionHandle, futureLivySession)
     sessionHandle
   }
 
   def closeSession(sessionHandle: SessionHandle): Unit = {
+    livySessionId(sessionHandle).map(sessionStore.removeSession(_))
     val removedSession = sessionHandleToLivySession.remove(sessionHandle)
     val removedSessionInfo = sessionInfo.remove(sessionHandle)
     try {
@@ -535,6 +599,30 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
   def getSessionInfo(sessionHandle: SessionHandle): SessionInfo = {
     sessionInfo.get(sessionHandle)
   }
+
+  private def getThriftSessionMetadata(
+      livySessionId: Int,
+      sessionHandle: SessionHandle): ThriftSessionRecoveryMetadata = {
+    val info = sessionInfo.get(sessionHandle)
+    ThriftSessionRecoveryMetadata(
+      livySessionId,
+      sessionHandle.getProtocolVersion.getValue,
+      sessionHandle.getHandleIdentifier.getPublicId,
+      sessionHandle.getHandleIdentifier.getSecretId,
+      info.username,
+      info.ipAddress,
+      info.forwardedAddresses,
+      info.creationTime)
+  }
+
+  private def createOperationMessages: Option[ConcurrentBoundedLinkedQueue[String]] = {
+    if (livyConf.getBoolean(LivyConf.THRIFT_LOG_OPERATION_ENABLED)) {
+      Some(new ConcurrentBoundedLinkedQueue[String](livyConf.getLong(
+        LivyConf.THRIFT_OPERATION_LOG_MAX_SIZE)))
+    } else {
+      None
+    }
+  }
 }
 
 object LivyThriftSessionManager extends Logging {
@@ -619,3 +707,15 @@ object LivyThriftSessionManager extends Logging {
  */
 class ThriftSessionCreationException(val livySession: Option[InteractiveSession], cause: Throwable)
   extends Exception(cause)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+case class ThriftSessionRecoveryMetadata(
+    id: Int,
+    protocolVersion: Int,
+    publicId: UUID,
+    secretId: UUID,
+    userName: String,
+    ipAddress: String,
+    forwardedAddresses: util.List[String],
+    creationTime: Long)
+  extends RecoveryMetadata

@@ -1,0 +1,41 @@
+From 5ec5a0e3a07112dc72c40c45ec310e550270ec10 Mon Sep 17 00:00:00 2001
+From: runzhiwang <runzhiwang@tencent.com>
+Date: Tue, 26 Nov 2019 15:23:11 +0800
+Subject: [PATCH] Fix server node add and remove error in HA mode
+
+---
+ .../main/scala/org/apache/livy/server/ServiceWatch.scala | 16 ++++++++++------
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/server/src/main/scala/org/apache/livy/server/ServiceWatch.scala b/server/src/main/scala/org/apache/livy/server/ServiceWatch.scala
+index b04530a..610a681 100644
+--- a/server/src/main/scala/org/apache/livy/server/ServiceWatch.scala
++++ b/server/src/main/scala/org/apache/livy/server/ServiceWatch.scala
+@@ -80,14 +80,18 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
+   }
+ 
+   private def nodeAddHandler(path: String, host: String): Unit = {
+-    logger.info("Detect new node add: " + host)
+-    consistentHash.addNode(host)
+-    nodeAddListeners.foreach(_(host))
++    val ip = host.split(":")(0)
++    logger.info("Detect new node add: " + ip)
++
++    consistentHash.addNode(ip)
++    nodeAddListeners.foreach(_(ip))
+   }
+ 
+   private def nodeRemoveHandler(path: String, host: String): Unit = {
+-    logger.info("Detect node removed: " + host)
+-    consistentHash.removeNode(host)
+-    nodeRemoveListeners.foreach(_(host))
++    val ip = host.split(":")(0)
++    logger.info("Detect node removed: " + ip)
++
++    consistentHash.removeNode(ip)
++    nodeRemoveListeners.foreach(_(ip))
+   }
+ }
+-- 
+2.14.2.windows.2
+

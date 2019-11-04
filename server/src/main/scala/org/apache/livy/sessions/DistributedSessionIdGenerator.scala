@@ -14,28 +14,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.livy.server.recovery
 
-import scala.reflect.ClassTag
+package org.apache.livy.sessions
 
-import org.apache.livy.{LivyConf, Logging}
+import org.apache.livy.server.recovery.BlackholeStateStore
+import org.apache.livy.server.recovery.SessionStore
+import org.apache.livy.server.recovery.ZooKeeperManager
 
-class ZooKeeperStateStore(livyConf: LivyConf) extends StateStore(livyConf) {
+class DistributedSessionIdGenerator(
+    sessionType: String,
+    sessionStore: SessionStore) extends SessionIdGenerator {
+
+  require(sessionStore.getStore.isInstanceOf[BlackholeStateStore] == false)
   require(ZooKeeperManager.get != null)
 
-  override def set(key: String, value: Object): Unit = {
-    ZooKeeperManager.get.set(key, value)
+  def getNextSessionId(): Int = {
+    ZooKeeperManager.get.lock()
+    val result = sessionStore.getNextSessionId(sessionType)
+    sessionStore.saveNextSessionId(sessionType, result + 1)
+    ZooKeeperManager.get.unlock()
+    result
   }
 
-  override def get[T: ClassTag](key: String): Option[T] = {
-    ZooKeeperManager.get.get(key)
-  }
-
-  override def getChildren(key: String): Seq[String] = {
-    ZooKeeperManager.get.getChildren(key)
-  }
-
-  override def remove(key: String): Unit = {
-    ZooKeeperManager.get.remove(key)
-  }
+  def recover(): Unit = {}
 }

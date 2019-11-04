@@ -14,28 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.livy.server.recovery
 
-import scala.reflect.ClassTag
+package org.apache.livy.sessions
 
-import org.apache.livy.{LivyConf, Logging}
+/**
+  * Interface of session id generator.
+  */
+abstract class SessionIdGenerator {
+  /**
+    * Get next session id, then increase next session id and save it in store.
+    */
+  def getNextSessionId(): Int
 
-class ZooKeeperStateStore(livyConf: LivyConf) extends StateStore(livyConf) {
-  require(ZooKeeperManager.get != null)
-
-  override def set(key: String, value: Object): Unit = {
-    ZooKeeperManager.get.set(key, value)
-  }
-
-  override def get[T: ClassTag](key: String): Option[T] = {
-    ZooKeeperManager.get.get(key)
-  }
-
-  override def getChildren(key: String): Seq[String] = {
-    ZooKeeperManager.get.getChildren(key)
-  }
-
-  override def remove(key: String): Unit = {
-    ZooKeeperManager.get.remove(key)
-  }
+  /**
+    * recover next session id from store.
+    */
+  def recover(): Unit
 }

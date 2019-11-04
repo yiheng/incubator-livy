@@ -55,11 +55,12 @@ object SessionServletSpec {
       { _ => assert(false).asInstanceOf[Session] },
       mock[SessionStore],
       "test",
+      None,
       Some(Seq.empty))
 
     val accessManager = new AccessManager(conf)
     new SessionServlet(sessionManager, conf, accessManager) with RemoteUserOverride {
-      override protected def createSession(req: HttpServletRequest): Session = {
+      override protected def createSession(req: HttpServletRequest, sessionId: Int): Session = {
         val params = bodyAs[Map[String, String]](req)
         val owner = remoteUser(req)
         val impersonatedUser = accessManager.checkImpersonation(

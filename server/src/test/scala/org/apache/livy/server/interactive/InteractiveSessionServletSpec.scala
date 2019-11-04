@@ -53,8 +53,9 @@ class InteractiveSessionServletSpec extends BaseInteractiveServletSpec {
 
     private var statements = IndexedSeq[Statement]()
 
-    override protected def createSession(req: HttpServletRequest): InteractiveSession = {
-      super.createSession(req)
+    override protected def createSession(
+        req: HttpServletRequest, sessionId: Int): InteractiveSession = {
+      super.createSession(req, sessionId)
 
       val statementCounter = new AtomicInteger()
 
@@ -98,7 +99,8 @@ class InteractiveSessionServletSpec extends BaseInteractiveServletSpec {
 
   override def createServlet(): InteractiveSessionServlet = {
     val conf = createConf()
-    val sessionManager = new InteractiveSessionManager(conf, mock[SessionStore], Some(Seq.empty))
+    val sessionManager = new InteractiveSessionManager(conf,
+      mock[SessionStore], None, Some(Seq.empty))
     val accessManager = new AccessManager(conf)
     new MockInteractiveSessionServlet(sessionManager, conf, accessManager)
   }

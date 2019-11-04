@@ -53,7 +53,7 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
    * Creates a new session based on the current request. The implementation is responsible for
    * parsing the body of the request.
    */
-  protected def createSession(req: HttpServletRequest): S
+  protected def createSession(req: HttpServletRequest, id: Int): S
 
   /**
    * Returns a object representing the session data to be sent back to the client.
@@ -131,15 +131,38 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
       if (tooManySessions) {
         BadRequest(ResponseMessage("Rejected, too many sessions are being created!"))
       } else {
-        val session = sessionManager.register(createSession(request))
-        // Because it may take some time to establish the session, update the last activity
-        // time before returning the session info to the client.
-        session.recordActivity()
-        Created(clientSessionView(session, request),
-          headers = Map("Location" ->
-            (getRequestPathInfo(request) + url(getSession, "id" -> session.id.toString))))
+        val sessionId = sessionManager.nextId()
+        if (sessionManager.serviceWatch.isDefined
+          && !sessionManager.serviceWatch.get.contains(sessionId)) {
+          val (host, port) = sessionManager.serviceWatch.get.search(sessionId)
+          val finalURL = s"http://$host:$port${request.getRequestURI}/" +
+            s"${sessionId}"
+          TemporaryRedirect(finalURL)
+        } else {
+          createSessionWithId(sessionId)
+        }
       }
     }
+  }
+
+  post("/:id") {
+    synchronized {
+      if (tooManySessions) {
+        BadRequest(ResponseMessage("Rejected, too many sessions are being created!"))
+      } else {
+        createSessionWithId(params("id").toInt)
+      }
+    }
+  }
+
+  private def createSessionWithId(sessionId: Int): ActionResult = {
+    val session = sessionManager.register(createSession(request, sessionId))
+    // Because it may take some time to establish the session, update the last activity
+    // time before returning the session info to the client.
+    session.recordActivity()
+    Created(clientSessionView(session, request),
+      headers = Map("Location" ->
+        (getRequestPathInfo(request) + url(getSession, "id" -> session.id.toString))))
   }
 
   private def getRequestPathInfo(request: HttpServletRequest): String = {

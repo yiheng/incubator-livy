@@ -266,10 +266,11 @@ private class HttpClientTestBootstrap extends LifeCycle {
   override def init(context: ServletContext): Unit = {
     val conf = new LivyConf()
     val stateStore = mock(classOf[SessionStore])
-    val sessionManager = new InteractiveSessionManager(conf, stateStore, Some(Seq.empty))
+    val sessionManager = new InteractiveSessionManager(conf, stateStore, None, Some(Seq.empty))
     val accessManager = new AccessManager(conf)
     val servlet = new InteractiveSessionServlet(sessionManager, stateStore, conf, accessManager) {
-      override protected def createSession(req: HttpServletRequest): InteractiveSession = {
+      override protected def createSession(
+          req: HttpServletRequest, sessionId: Int): InteractiveSession = {
         val session = mock(classOf[InteractiveSession])
         val id = sessionManager.nextId()
         when(session.id).thenReturn(id)
