@@ -198,13 +198,10 @@ object LivyConf {
     */
   val HA_MULTI_ACTIVE_ENABLED = Entry("livy.server.ha.multi-active.enabled", false)
 
+  val HA_CONSISTENT_HASH_REPLICA_NUM = Entry("livy.server.ha.replicate.num", 200)
+
   // Zookeeper address used for HA and state store. e.g. host1:port1, host2:port2
   val ZOOKEEPER_URL = Entry("livy.server.zookeeper.url", "")
-
-  /**
-    * To achieve well-distributed in consistent hash algorithm, each server has a lot of replicates.
-    */
-  val HA_REPLICATE_NUM = Entry("livy.server.ha.replicate.num", 200)
 
   /**
    * Where Livy should store state to for recovery. Possible values:

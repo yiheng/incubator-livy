@@ -36,7 +36,6 @@ import org.scalatra.metrics.MetricsSupportExtensions._
 import org.scalatra.servlet.{MultipartConfig, ServletApiImplicits}
 
 import org.apache.livy._
-import org.apache.livy.rsc.RSCConf.Entry.LAUNCHER_ADDRESS
 import org.apache.livy.server.auth.LdapAuthenticationHandlerImpl
 import org.apache.livy.server.batch.BatchSessionServlet
 import org.apache.livy.server.interactive.InteractiveSessionServlet
@@ -44,7 +43,6 @@ import org.apache.livy.server.recovery.{SessionStore, StateStore, ZooKeeperManag
 import org.apache.livy.server.ui.UIServlet
 import org.apache.livy.sessions.{BatchSessionManager, InteractiveSessionManager}
 import org.apache.livy.sessions.SessionManager.SESSION_RECOVERY_MODE_OFF
-import org.apache.livy.utils.ConsistentHash
 import org.apache.livy.utils.LivySparkUtils._
 import org.apache.livy.utils.SparkYarnApp
 
@@ -61,7 +59,8 @@ class LivyServer extends Logging {
   private var executor: ScheduledExecutorService = _
   private var accessManager: AccessManager = _
   private var _thriftServerFactory: Option[ThriftServerFactory] = None
-  private var consistentHash: Option[ConsistentHash] = None
+
+  private var serviceWatch: Option[ServiceWatch] = None
 
   private var ugi: UserGroupInformation = _
 
@@ -152,28 +151,17 @@ class LivyServer extends Logging {
     if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED) ||
       livyConf.get(LivyConf.RECOVERY_STATE_STORE) == "zookeeper") {
       ZooKeeperManager(livyConf)
-    }
-
-    consistentHash = {
-      if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)) {
-        Some(new ConsistentHash(livyConf.getInt(LivyConf.HA_REPLICATE_NUM)))
-      } else {
-        None
-      }
-    }
-
-    if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)) {
-      val serverIp = livyConf.get(LAUNCHER_ADDRESS)
-      require(serverIp != null, "Please config the livy.rsc.launcher.address")
-      val serviceWatch = new ServiceWatch(consistentHash.get,
-        ZooKeeperManager.haPrefixKey("service"))
-      serviceWatch.register(serverIp, port)
+      serviceWatch = Some(new ServiceWatch(livyConf,
+        ZooKeeperManager.haPrefixKey("service")))
     }
 
     StateStore.init(livyConf)
     val sessionStore = new SessionStore(livyConf)
-    val batchSessionManager = new BatchSessionManager(livyConf, sessionStore)
-    val interactiveSessionManager = new InteractiveSessionManager(livyConf, sessionStore)
+
+    val batchSessionManager =
+      new BatchSessionManager(livyConf, sessionStore, serviceWatch)
+    val interactiveSessionManager =
+      new InteractiveSessionManager(livyConf, sessionStore, serviceWatch)
 
     server = new WebServer(livyConf, host, port)
     server.context.setResourceBase("src/main/org/apache/livy/server")
@@ -354,6 +342,7 @@ class LivyServer extends Logging {
 
     _serverUrl = Some(s"${server.protocol}://${server.host}:${server.port}")
     sys.props("livy.server.server-url") = _serverUrl.get
+    serviceWatch.foreach(_.register())
   }
 
   def runKinit(keytab: String, principal: String): Boolean = {

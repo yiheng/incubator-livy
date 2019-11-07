@@ -30,6 +30,7 @@ import org.apache.livy.{LivyConf, Logging}
 import org.apache.livy.server.batch.{BatchRecoveryMetadata, BatchSession}
 import org.apache.livy.server.interactive.{InteractiveRecoveryMetadata, InteractiveSession, SessionHeartbeatWatchdog}
 import org.apache.livy.server.recovery.{SessionStore, ZooKeeperManager}
+import org.apache.livy.server.ServiceWatch
 import org.apache.livy.sessions.Session.RecoveryMetadata
 
 object SessionManager {
@@ -40,19 +41,27 @@ object SessionManager {
 class BatchSessionManager(
     livyConf: LivyConf,
     sessionStore: SessionStore,
+    serviceWatch: Option[ServiceWatch] = None,
     mockSessions: Option[Seq[BatchSession]] = None)
   extends SessionManager[BatchSession, BatchRecoveryMetadata] (
-    livyConf, BatchSession.recover(_, livyConf, sessionStore), sessionStore, "batch", mockSessions)
+    livyConf,
+    BatchSession.recover(_, livyConf, sessionStore),
+    sessionStore,
+    "batch",
+    serviceWatch,
+    mockSessions)
 
 class InteractiveSessionManager(
   livyConf: LivyConf,
   sessionStore: SessionStore,
+  serviceWatch: Option[ServiceWatch] = None,
   mockSessions: Option[Seq[InteractiveSession]] = None)
   extends SessionManager[InteractiveSession, InteractiveRecoveryMetadata] (
     livyConf,
     InteractiveSession.recover(_, livyConf, sessionStore),
     sessionStore,
     "interactive",
+    serviceWatch,
     mockSessions)
   with SessionHeartbeatWatchdog[InteractiveSession, InteractiveRecoveryMetadata]
   {
@@ -64,6 +73,7 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
     sessionRecovery: R => S,
     sessionStore: SessionStore,
     sessionType: String,
+    val serviceWatch: Option[ServiceWatch] = None,
     mockSessions: Option[Seq[S]] = None)
   extends Logging {
 
@@ -92,7 +102,20 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
     }
   }
 
+  // Recover next session id from state store and create SessionManager.
+  sessionIdGenerator.recover()
   mockSessions.getOrElse(recover()).foreach(register)
+
+  serviceWatch.foreach(sw => {
+    sw.registerNodeAddListener(_ => {
+      recover().filter(s => !contains(s.id)).foreach(register)
+      sessions.keySet.filter(!sw.contains(_)).foreach(sessions.remove(_))
+    })
+    sw.registerNodeRemoveListener(_ => {
+      recover().filter(s => !contains(s.id)).foreach(register)
+      sessions.keySet.filter(!sw.contains(_)).foreach(sessions.remove(_))
+    })
+  })
   new GarbageCollector().start()
 
   def nextId(): Int = synchronized {
@@ -185,15 +208,24 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
     })
   }
 
-  private def recover(): Seq[S] = {
-    // Recover next session id from state store and create SessionManager.
-    sessionIdGenerator.recover()
+  def contains(id: Int): Boolean = sessions.contains(id)
 
+
+  private def recover(): Seq[S] = {
     // Retrieve session recovery metadata from state store.
     val sessionMetadata = sessionStore.getAllSessions[R](sessionType)
 
     // Recover session from session recovery metadata.
-    val recoveredSessions = sessionMetadata.flatMap(_.toOption).map(sessionRecovery)
+    val recoveredSessions = sessionMetadata.flatMap(_.toOption)
+      .filter(r => !contains(r.id))
+      .filter(r => {
+        if (serviceWatch.isDefined) {
+          serviceWatch.get.contains(r.id)
+        } else {
+          true
+        }
+      })
+      .map(sessionRecovery)
 
     // Print recovery error.
     val recoveryFailure = sessionMetadata.filter(_.isFailure).map(_.failed.get)

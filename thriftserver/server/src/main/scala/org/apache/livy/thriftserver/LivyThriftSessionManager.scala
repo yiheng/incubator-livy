@@ -163,7 +163,16 @@ class LivyThriftSessionManager(
 
   private def recover(): Unit = {
     val sessionMetadata = sessionStore.getAllSessions()
-    sessionMetadata.flatMap(_.toOption).foreach(sessionRecovery)
+    sessionMetadata.flatMap(_.toOption)
+      .filter(r => !server.livySessionManager.contains(r.id))
+      .filter(r => {
+        if (server.livySessionManager.serviceWatch.isDefined) {
+          server.livySessionManager.serviceWatch.get.contains(r.id)
+        } else {
+          true
+        }
+      })
+      .foreach(sessionRecovery)
 
     // Print recovery error.
     val recoveryFailure = sessionMetadata.filter(_.isFailure).map(_.failed.get)
