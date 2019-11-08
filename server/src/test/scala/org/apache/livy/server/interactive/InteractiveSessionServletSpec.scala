@@ -98,8 +98,7 @@ class InteractiveSessionServletSpec extends BaseInteractiveServletSpec {
 
   override def createServlet(): InteractiveSessionServlet = {
     val conf = createConf()
-    val sessionManager = new InteractiveSessionManager(conf,
-      mock[SessionStore], None, Some(Seq.empty))
+    val sessionManager = new InteractiveSessionManager(conf, mock[SessionStore], Some(Seq.empty))
     val accessManager = new AccessManager(conf)
     new MockInteractiveSessionServlet(sessionManager, conf, accessManager)
   }

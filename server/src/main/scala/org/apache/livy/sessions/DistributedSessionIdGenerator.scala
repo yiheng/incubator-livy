@@ -23,16 +23,16 @@ import org.apache.livy.server.recovery.ZooKeeperManager
 
 class DistributedSessionIdGenerator(
     sessionType: String,
-    sessionStore: SessionStore,
-    zkManager: ZooKeeperManager) extends SessionIdGenerator {
+    sessionStore: SessionStore) extends SessionIdGenerator {
 
   require(sessionStore.getStore.isInstanceOf[BlackholeStateStore] == false)
+  require(ZooKeeperManager.get != null)
 
   def getNextSessionId(): Int = {
-    zkManager.lock()
+    ZooKeeperManager.get.lock()
     val result = sessionStore.getNextSessionId(sessionType)
     sessionStore.saveNextSessionId(sessionType, result + 1)
-    zkManager.unlock()
+    ZooKeeperManager.get.unlock()
     result
   }
 

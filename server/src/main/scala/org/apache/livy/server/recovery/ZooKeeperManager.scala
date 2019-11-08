@@ -33,19 +33,37 @@ import org.apache.livy.LivyConf.Entry
 object ZooKeeperManager {
   val ZK_KEY_PREFIX_CONF = Entry("livy.server.recovery.zk-state-store.key-prefix", "livy")
   val ZK_RETRY_CONF = Entry("livy.server.recovery.zk-state-store.retry-policy", "5,100")
+  val DUPLICATE_CREATE_EXCEPTION = "ZooKeeperManager single instance has already been created"
+
+  @volatile private var zkManager: ZooKeeperManager = _
+
+  def apply(livyConf: LivyConf,
+    mockCuratorClient: Option[CuratorFramework] = None,
+    mockDistributedLock: Option[InterProcessSemaphoreMutex] = None):
+  ZooKeeperManager = synchronized {
+    if (zkManager == null) {
+      zkManager = new ZooKeeperManager(livyConf, mockCuratorClient, mockDistributedLock)
+    } else {
+      throw new IllegalAccessException(DUPLICATE_CREATE_EXCEPTION)
+    }
+
+    zkManager
+  }
+
+  def get(): ZooKeeperManager = zkManager
+
+  // for test
+  private[recovery] def reset(): Unit = {
+    zkManager = null
+  }
 }
 
-class ZooKeeperManager(
+class ZooKeeperManager private(
     livyConf: LivyConf,
     mockCuratorClient: Option[CuratorFramework] = None,
     mockDistributedLock: Option[InterProcessSemaphoreMutex] = None) extends JsonMapper{
 
   import ZooKeeperManager._
-
-  // Constructor defined for StateStore factory to new this class using reflection.
-  def this(livyConf: LivyConf) {
-    this(livyConf, None)
-  }
 
   private val zkAddress = livyConf.get(LivyConf.ZOOKEEPER_URL)
   require(!zkAddress.isEmpty, s"Please config ${LivyConf.RECOVERY_STATE_STORE_URL.key}.")

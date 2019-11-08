@@ -44,7 +44,6 @@ class SessionManagerSpec extends FunSpec with Matchers with LivyBaseUnitTestSuit
       { _ => assert(false).asInstanceOf[MockSession] },
       mock[SessionStore],
       "test",
-      None,
       Some(Seq.empty))
     (livyConf, manager)
   }
@@ -248,7 +247,7 @@ class SessionManagerSpec extends FunSpec with Matchers with LivyBaseUnitTestSuit
       val sessionStore = mock[SessionStore]
       val session = mockSession(sessionId)
 
-      val sm = new BatchSessionManager(conf, sessionStore, None, Some(Seq(session)))
+      val sm = new BatchSessionManager(conf, sessionStore, Some(Seq(session)))
       sm.get(sessionId) shouldBe defined
 
       Await.ready(sm.delete(sessionId).get, 30 seconds)
@@ -263,7 +262,7 @@ class SessionManagerSpec extends FunSpec with Matchers with LivyBaseUnitTestSuit
       val sessionStore = mock[SessionStore]
       val session = mockSession(sessionId)
 
-      val sm = new BatchSessionManager(conf, sessionStore, None, Some(Seq(session)))
+      val sm = new BatchSessionManager(conf, sessionStore, Some(Seq(session)))
       sm.get(sessionId) shouldBe defined
       sm.shutdown()
 
@@ -278,7 +277,7 @@ class SessionManagerSpec extends FunSpec with Matchers with LivyBaseUnitTestSuit
       val sessionStore = mock[SessionStore]
       val session = mockSession(sessionId)
 
-      val sm = new BatchSessionManager(conf, sessionStore, None, Some(Seq(session)))
+      val sm = new BatchSessionManager(conf, sessionStore, Some(Seq(session)))
       sm.get(sessionId) shouldBe defined
       sm.shutdown()
 

@@ -64,7 +64,6 @@ class SessionHeartbeatSpec extends FunSpec with Matchers {
         { _ => assert(false).asInstanceOf[TestSession] },
         mock[SessionStore],
         "test",
-        None,
         Some(Seq.empty))
         with SessionHeartbeatWatchdog[TestSession, RecoveryMetadata] {}
 

@@ -44,8 +44,9 @@ class ZooKeeperStateStoreSpec extends FunSpec with LivyBaseUnitTestSuite {
       when(curatorClient.getUnhandledErrorListenable())
         .thenReturn(mock[Listenable[UnhandledErrorListener]])
       val distributedLock = mock[InterProcessSemaphoreMutex]
-      val zkManager = new ZooKeeperManager(conf, Some(curatorClient), Some(distributedLock))
-      val stateStore = new ZooKeeperStateStore(conf, zkManager)
+      ZooKeeperManager.reset()
+      ZooKeeperManager(conf, Some(curatorClient), Some(distributedLock))
+      val stateStore = new ZooKeeperStateStore(conf)
       testBody(TestFixture(stateStore, curatorClient))
     }
 
@@ -60,11 +61,17 @@ class ZooKeeperStateStoreSpec extends FunSpec with LivyBaseUnitTestSuite {
     it("should throw on bad config") {
       withMock { f =>
         val conf = new LivyConf()
-        intercept[IllegalArgumentException] { new ZooKeeperManager(conf) }
+        intercept[IllegalArgumentException] {
+          ZooKeeperManager.reset()
+          ZooKeeperManager(conf)
+        }
 
         conf.set(LivyConf.ZOOKEEPER_URL, "host")
         conf.set(ZooKeeperManager.ZK_RETRY_CONF, "bad")
-        intercept[IllegalArgumentException] { new ZooKeeperManager(conf) }
+        intercept[IllegalArgumentException] {
+          ZooKeeperManager.reset()
+          ZooKeeperManager(conf)
+        }
       }
     }
 
@@ -103,8 +110,8 @@ class ZooKeeperStateStoreSpec extends FunSpec with LivyBaseUnitTestSuite {
         withMock { f =>
         mockExistsBuilder(f.curatorClient, true)
 
-        f.stateStore.getZooKeeperManager().retryPolicy should not be null
-        f.stateStore.getZooKeeperManager().retryPolicy.getN shouldBe 11
+        ZooKeeperManager.get.retryPolicy should not be null
+        ZooKeeperManager.get.retryPolicy.getN shouldBe 11
       }
     }
 

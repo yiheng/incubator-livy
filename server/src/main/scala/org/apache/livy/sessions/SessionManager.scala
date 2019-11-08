@@ -40,27 +40,19 @@ object SessionManager {
 class BatchSessionManager(
     livyConf: LivyConf,
     sessionStore: SessionStore,
-    zkManager: Option[ZooKeeperManager] = None,
     mockSessions: Option[Seq[BatchSession]] = None)
   extends SessionManager[BatchSession, BatchRecoveryMetadata] (
-    livyConf,
-    BatchSession.recover(_, livyConf, sessionStore),
-    sessionStore,
-    "batch",
-    zkManager,
-    mockSessions)
+    livyConf, BatchSession.recover(_, livyConf, sessionStore), sessionStore, "batch", mockSessions)
 
 class InteractiveSessionManager(
   livyConf: LivyConf,
   sessionStore: SessionStore,
-  zkManager: Option[ZooKeeperManager] = None,
   mockSessions: Option[Seq[InteractiveSession]] = None)
   extends SessionManager[InteractiveSession, InteractiveRecoveryMetadata] (
     livyConf,
     InteractiveSession.recover(_, livyConf, sessionStore),
     sessionStore,
     "interactive",
-    zkManager,
     mockSessions)
   with SessionHeartbeatWatchdog[InteractiveSession, InteractiveRecoveryMetadata]
   {
@@ -72,7 +64,6 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
     sessionRecovery: R => S,
     sessionStore: SessionStore,
     sessionType: String,
-    zkManager: Option[ZooKeeperManager] = None,
     mockSessions: Option[Seq[S]] = None)
   extends Logging {
 
@@ -95,7 +86,7 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
 
   private final val sessionIdGenerator = {
     if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)) {
-      new DistributedSessionIdGenerator(sessionType, sessionStore, zkManager.get)
+      new DistributedSessionIdGenerator(sessionType, sessionStore)
     } else {
       new LocalSessionIdGenerator(sessionType, sessionStore)
     }

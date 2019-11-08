@@ -20,28 +20,22 @@ import scala.reflect.ClassTag
 
 import org.apache.livy.{LivyConf, Logging}
 
-class ZooKeeperStateStore(
-    livyConf: LivyConf,
-    zkManager: ZooKeeperManager)
-  extends StateStore(livyConf) with Logging {
+class ZooKeeperStateStore(livyConf: LivyConf) extends StateStore(livyConf) {
+  require(ZooKeeperManager.get != null)
 
   override def set(key: String, value: Object): Unit = {
-    zkManager.set(key, value)
+    ZooKeeperManager.get.set(key, value)
   }
 
   override def get[T: ClassTag](key: String): Option[T] = {
-    zkManager.get(key)
+    ZooKeeperManager.get.get(key)
   }
 
   override def getChildren(key: String): Seq[String] = {
-    zkManager.getChildren(key)
+    ZooKeeperManager.get.getChildren(key)
   }
 
   override def remove(key: String): Unit = {
-    zkManager.remove(key)
-  }
-
-  def getZooKeeperManager(): ZooKeeperManager = {
-    return zkManager
+    ZooKeeperManager.get.remove(key)
   }
 }

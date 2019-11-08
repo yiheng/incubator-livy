@@ -55,7 +55,6 @@ object SessionServletSpec {
       { _ => assert(false).asInstanceOf[Session] },
       mock[SessionStore],
       "test",
-      None,
       Some(Seq.empty))
 
     val accessManager = new AccessManager(conf)
