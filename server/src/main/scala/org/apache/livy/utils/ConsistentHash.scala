@@ -41,6 +41,10 @@ class ConsistentHash(replicateNum: Int) {
   }
 
   def addNode(node: String): Unit = {
+    if (virtualNodes.containsValue(node)) {
+      return
+    }
+
     // one digest is 16 bytes, each replicate get hash value from 4 bytes of digest
     // so 4 replicates, i.e.MD5_HAS_HASH_NUM, share one digest
     val md5Num = replicateNum / REPLICATE_NUM_SHARE_MD5
