@@ -202,6 +202,11 @@ object LivyConf {
   val ZOOKEEPER_URL = Entry("livy.server.zookeeper.url", "")
 
   /**
+    * To achieve well-distributed in consistent hash algorithm, each server has a lot of replicates.
+    */
+  val HA_REPLICATE_NUM = Entry("livy.server.ha.replicate.num", 200)
+
+  /**
    * Where Livy should store state to for recovery. Possible values:
    * <empty>: Default. State store disabled.
    * filesystem: Store state on a file system.

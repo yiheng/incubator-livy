@@ -112,6 +112,8 @@
 # livy.server.ha.multi-active.enabled = false
 # Zookeeper address used for HA and state store. e.g. host1:port1, host2:port2
 # livy.server.zookeeper.url =
+# To achieve well-distributed in consistent hash algorithm, each server has a lot of replicates.
+# livy.server.ha.replicate.num = 200
 
 # Where Livy should store state to for recovery. Possible values:
 # <empty>: Default. State store disabled.

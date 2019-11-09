@@ -23,8 +23,13 @@ import scala.reflect.ClassTag
 import org.apache.curator.framework.api.UnhandledErrorListener
 import org.apache.curator.framework.CuratorFramework
 import org.apache.curator.framework.CuratorFrameworkFactory
+import org.apache.curator.framework.recipes.cache.PathChildrenCache
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent.Type
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener
 import org.apache.curator.framework.recipes.locks.InterProcessSemaphoreMutex
 import org.apache.curator.retry.RetryNTimes
+import org.apache.zookeeper.CreateMode
 import org.apache.zookeeper.KeeperException.NoNodeException
 
 import org.apache.livy.LivyConf
@@ -34,6 +39,7 @@ object ZooKeeperManager {
   val ZK_KEY_PREFIX_CONF = Entry("livy.server.recovery.zk-state-store.key-prefix", "livy")
   val ZK_RETRY_CONF = Entry("livy.server.recovery.zk-state-store.retry-policy", "5,100")
   val DUPLICATE_CREATE_EXCEPTION = "ZooKeeperManager single instance has already been created"
+  val HA_METADATA_VERSION = "v1"
 
   @volatile private var zkManager: ZooKeeperManager = _
 
@@ -51,6 +57,8 @@ object ZooKeeperManager {
   }
 
   def get(): ZooKeeperManager = zkManager
+
+  def haPrefixKey(key: String): String = s"ha-metadata/$HA_METADATA_VERSION/$key"
 
   // for test
   private[recovery] def reset(): Unit = {
@@ -82,7 +90,7 @@ class ZooKeeperManager private(
     CuratorFrameworkFactory.newClient(zkAddress, retryPolicy)
   }
 
-  private val lockPath = prefixKey("distributedLock")
+  private val lockPath = prefixKey(haPrefixKey("distributedLock"))
   private[recovery] val distributedLock = mockDistributedLock.getOrElse {
     new InterProcessSemaphoreMutex(curatorClient, lockPath)
   }
@@ -145,6 +153,38 @@ class ZooKeeperManager private(
 
   def unlock(): Unit = {
     distributedLock.release()
+  }
+
+  def watchAddNode(path: String, nodeAddHandler: (String, Array[Byte]) => Unit): Unit = {
+    watchNode(path, nodeAddHandler, Type.CHILD_ADDED)
+  }
+
+  def watchRemoveNode(path: String, nodeRemoveHandler: (String, Array[Byte]) => Unit): Unit = {
+    watchNode(path, nodeRemoveHandler, Type.CHILD_REMOVED)
+  }
+
+  def watchNode(path: String,
+    nodeEventHandler: (String, Array[Byte]) => Unit,
+    eventType: PathChildrenCacheEvent.Type): Unit = {
+
+    val cache = new PathChildrenCache(curatorClient, prefixKey(path), true)
+    cache.start()
+
+    val listener = new PathChildrenCacheListener() {
+      override def childEvent(client: CuratorFramework, event: PathChildrenCacheEvent): Unit = {
+        val data = event.getData
+        if (event.getType == eventType) {
+          nodeEventHandler(data.getPath, data.getData)
+        }
+      }
+    }
+
+    cache.getListenable.addListener(listener)
+  }
+
+  def createEphemeralNode(path: String, data: String): Unit = {
+    curatorClient.create.creatingParentsIfNeeded.
+      withMode(CreateMode.EPHEMERAL).forPath(prefixKey(path), data.getBytes)
   }
 
   private def prefixKey(key: String) = s"/$zkKeyPrefix/$key"
