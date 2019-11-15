@@ -155,16 +155,16 @@ class ZooKeeperManager private(
     distributedLock.release()
   }
 
-  def watchAddNode(path: String, nodeAddHandler: (String, Array[Byte]) => Unit): Unit = {
+  def watchAddNode[T: ClassTag](path: String, nodeAddHandler: (String, T) => Unit): Unit = {
     watchNode(path, nodeAddHandler, Type.CHILD_ADDED)
   }
 
-  def watchRemoveNode(path: String, nodeRemoveHandler: (String, Array[Byte]) => Unit): Unit = {
+  def watchRemoveNode[T: ClassTag](path: String, nodeRemoveHandler: (String, T) => Unit): Unit = {
     watchNode(path, nodeRemoveHandler, Type.CHILD_REMOVED)
   }
 
-  def watchNode(path: String,
-    nodeEventHandler: (String, Array[Byte]) => Unit,
+  def watchNode[T: ClassTag](path: String,
+    nodeEventHandler: (String, T) => Unit,
     eventType: PathChildrenCacheEvent.Type): Unit = {
 
     val cache = new PathChildrenCache(curatorClient, prefixKey(path), true)
@@ -174,7 +174,7 @@ class ZooKeeperManager private(
       override def childEvent(client: CuratorFramework, event: PathChildrenCacheEvent): Unit = {
         val data = event.getData
         if (event.getType == eventType) {
-          nodeEventHandler(data.getPath, data.getData)
+          nodeEventHandler(data.getPath, deserialize[T](data.getData))
         }
       }
     }
@@ -182,9 +182,10 @@ class ZooKeeperManager private(
     cache.getListenable.addListener(listener)
   }
 
-  def createEphemeralNode(path: String, data: String): Unit = {
+  def createEphemeralNode(path: String, value: Object): Unit = {
+    val data = serializeToBytes(value)
     curatorClient.create.creatingParentsIfNeeded.
-      withMode(CreateMode.EPHEMERAL).forPath(prefixKey(path), data.getBytes)
+      withMode(CreateMode.EPHEMERAL).forPath(prefixKey(path), data)
   }
 
   private def prefixKey(key: String) = s"/$zkKeyPrefix/$key"

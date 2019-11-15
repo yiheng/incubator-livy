@@ -50,7 +50,8 @@ class InteractiveSessionServlet(
   mapper.registerModule(new SessionKindModule())
     .registerModule(new Json4sScalaModule())
 
-  override protected def createSession(req: HttpServletRequest): InteractiveSession = {
+  override protected def createSession(
+      req: HttpServletRequest, sessionId: Int): InteractiveSession = {
     val createRequest = bodyAs[CreateInteractiveRequest](req)
     InteractiveSession.create(
       sessionManager.nextId(),

@@ -182,6 +182,8 @@ object LivyConf {
     Entry("livy.server.thrift.ldap.authentication.domain", null)
   val THRIFT_LDAP_AUTHENTICATION_USERFILTER =
     Entry("livy.server.thrift.ldap.authentication.userfilter", null)
+  val THRIFT_ZOOKEEPER_NAMESPACE =
+    Entry("livy.server.thrift.zookeeper.namespace", "livy")
   /**
    * Recovery mode of Livy. Possible values:
    * off: Default. Turn off recovery. Every time Livy shuts down, it stops and forgets all sessions.

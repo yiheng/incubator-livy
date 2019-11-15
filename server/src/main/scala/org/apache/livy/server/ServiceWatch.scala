@@ -19,23 +19,21 @@ package org.apache.livy.server
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.livy.LivyConf
-import org.apache.livy.LivyConf.SERVER_PORT
+import org.apache.livy.LivyConf._
 import org.apache.livy.Logging
 import org.apache.livy.rsc.RSCConf.Entry.LAUNCHER_ADDRESS
 import org.apache.livy.server.recovery.ZooKeeperManager
 import org.apache.livy.utils.ConsistentHash
 
 class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
-  require(ZooKeeperManager.get != null)
+  require(ZooKeeperManager.get != null, "Cannot find zookeeper service")
   private val consistentHash =
     new ConsistentHash(livyConf.getInt(LivyConf.HA_CONSISTENT_HASH_REPLICA_NUM))
 
   private val serverIP = livyConf.get(LAUNCHER_ADDRESS)
   require(serverIP != null, "Please config the livy.rsc.launcher.address")
   private val port = livyConf.getInt(SERVER_PORT)
-  private val address = serverIP + ":" + port
-  consistentHash.addNode(address)
-
+  consistentHash.addNode(serverIP)
 
   private val nodeAddListeners = new ArrayBuffer[String => Unit]()
   private val nodeRemoveListeners = new ArrayBuffer[String => Unit]()
@@ -45,11 +43,29 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
   ZooKeeperManager.get.watchRemoveNode(dir, nodeRemoveHandler)
 
   def register(): Unit = {
-    ZooKeeperManager.get.createEphemeralNode(dir + "/" + address, address)
+    if (livyConf.getBoolean(THRIFT_SERVER_ENABLED)) {
+      val thriftPort = livyConf.getInt(THRIFT_SERVER_PORT)
+      ZooKeeperManager.get.createEphemeralNode(
+        livyConf.get(THRIFT_ZOOKEEPER_NAMESPACE) + "/" + serverIP, s"$serverIP:$thriftPort")
+    }
+
+    ZooKeeperManager.get.createEphemeralNode(dir + "/" + serverIP, s"$serverIP:$port")
   }
 
   def contains(sessionId: Int): Boolean = {
-    consistentHash.searchNode(sessionId.toString).getOrElse("") == address
+    // We have added current node into consistentHash
+    consistentHash.searchNode(sessionId.toString).get == serverIP
+  }
+
+  def search(sessionId: Int, path: String = dir): (String, Int) = {
+    val key = consistentHash.searchNode(sessionId.toString).get
+    val hostPort = ZooKeeperManager.get.get[String](path + "/" + key).get.split(":")
+    (hostPort(0), hostPort(1).toInt)
+  }
+
+  def searchThrift(sessionId: Int): (String, Int) = {
+    require(livyConf.getBoolean(THRIFT_SERVER_ENABLED), "Thrift service is not configured")
+    search(sessionId, livyConf.get(THRIFT_ZOOKEEPER_NAMESPACE))
   }
 
   def registerNodeAddListener(f : String => Unit): Unit = {
@@ -60,17 +76,15 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
     nodeRemoveListeners.append(f)
   }
 
-  private def nodeAddHandler(path: String, data: Array[Byte]): Unit = {
-    val dataStr = (data.map(_.toChar)).mkString
-    logger.info("Detect new node add: " + dataStr)
-    consistentHash.addNode(dataStr)
-    nodeAddListeners.foreach(_(dataStr))
+  private def nodeAddHandler(path: String, host: String): Unit = {
+    logger.info("Detect new node add: " + host)
+    consistentHash.addNode(host)
+    nodeAddListeners.foreach(_(host))
   }
 
-  private def nodeRemoveHandler(path: String, data: Array[Byte]): Unit = {
-    val dataStr = (data.map(_.toChar)).mkString
-    logger.info("Detect node removed: " + dataStr)
-    consistentHash.removeNode(dataStr)
-    nodeRemoveListeners.foreach(_(dataStr))
+  private def nodeRemoveHandler(path: String, host: String): Unit = {
+    logger.info("Detect node removed: " + host)
+    consistentHash.removeNode(host)
+    nodeRemoveListeners.foreach(_(host))
   }
 }
