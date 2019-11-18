@@ -36,9 +36,11 @@ import org.scalatra.metrics.MetricsSupportExtensions._
 import org.scalatra.servlet.{MultipartConfig, ServletApiImplicits}
 
 import org.apache.livy._
+import org.apache.livy.rsc.RSCConf.Entry.LAUNCHER_ADDRESS
 import org.apache.livy.server.auth.LdapAuthenticationHandlerImpl
 import org.apache.livy.server.batch.BatchSessionServlet
 import org.apache.livy.server.interactive.InteractiveSessionServlet
+import org.apache.livy.server.nodes.NodesServlet
 import org.apache.livy.server.recovery.{SessionStore, StateStore, ZooKeeperManager}
 import org.apache.livy.server.ui.UIServlet
 import org.apache.livy.sessions.{BatchSessionManager, InteractiveSessionManager}
@@ -74,6 +76,8 @@ class LivyServer extends Logging {
     val multipartConfig = MultipartConfig(
         maxFileSize = Some(livyConf.getLong(LivyConf.FILE_UPLOAD_MAX_SIZE))
       ).toMultipartConfigElement
+    val haEnable = livyConf.getBoolean(HA_MULTI_ACTIVE_ENABLED)
+    val serverIP = livyConf.get(LAUNCHER_ADDRESS)
 
     // Make sure the `spark-submit` program exists, otherwise much of livy won't work.
     testSparkHome(livyConf)
@@ -148,8 +152,7 @@ class LivyServer extends Logging {
       Future { SparkYarnApp.yarnClient }
     }
 
-    if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED) ||
-      livyConf.get(LivyConf.RECOVERY_STATE_STORE) == "zookeeper") {
+    if (haEnable || livyConf.get(LivyConf.RECOVERY_STATE_STORE) == "zookeeper") {
       ZooKeeperManager(livyConf)
       serviceWatch = Some(new ServiceWatch(livyConf,
         ZooKeeperManager.haPrefixKey("service")))
@@ -221,6 +224,8 @@ class LivyServer extends Logging {
           try {
             val context = sce.getServletContext()
             context.initParameters(org.scalatra.EnvironmentKey) = livyConf.get(ENVIRONMENT)
+            val nodesServlet = new NodesServlet(interactiveSessionManager)
+            mount(context, nodesServlet, "/*")
 
             val interactiveServlet = new InteractiveSessionServlet(
               interactiveSessionManager, sessionStore, livyConf, accessManager)
@@ -324,6 +329,12 @@ class LivyServer extends Logging {
       info("Access control is enabled")
       val accessHolder = new FilterHolder(new AccessFilter(accessManager))
       server.context.addFilter(accessHolder, "/*", EnumSet.allOf(classOf[DispatcherType]))
+    }
+
+    if (haEnable) {
+      info("Multi-active ha is enabled")
+      val routeHolder = new FilterHolder(new RouteFilter(interactiveSessionManager, serverIP))
+      server.context.addFilter(routeHolder, "/*", EnumSet.allOf(classOf[DispatcherType]))
     }
 
     server.start()
