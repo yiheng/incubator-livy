@@ -111,7 +111,7 @@ start_livy_server() {
     LIVY_LOG_DIR=${LIVY_LOG_DIR:-${LIVY_HOME}/logs}
     create_dir $LIVY_LOG_DIR "LIVY_LOG_DIR"
     create_dir $LIVY_PID_DIR "LIVY_PID_DIR"
-    log="$LIVY_LOG_DIR/livy-$LIVY_IDENT_STRING-server.out"
+    log="$LIVY_LOG_DIR/livy-server.log"
     # Set default scheduling priority
     LIVY_NICENESS=${LIVY_NICENESS:-0}
     if [ -f "$pid" ]; then
@@ -122,7 +122,6 @@ start_livy_server() {
       fi
     fi
 
-    livy_rotate_log "$log"
     echo "starting $command, logging to $log"
     nohup nice -n "$LIVY_NICENESS" $command >> "$log" 2>&1 < /dev/null &
     newpid="$!"
