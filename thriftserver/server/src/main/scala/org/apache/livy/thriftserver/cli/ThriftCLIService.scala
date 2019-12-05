@@ -27,7 +27,6 @@ import scala.collection.JavaConverters._
 
 import com.google.common.base.Preconditions.checkArgument
 import org.apache.hadoop.security.UserGroupInformation
-
 import org.apache.hadoop.security.authentication.util.KerberosName
 import org.apache.hadoop.security.authorize.ProxyUsers
 import org.apache.hadoop.util.StringUtils

@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 
 import com.ning.http.client.AsyncHttpClient
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.yarn.api.records.ApplicationReport
 import org.apache.hadoop.yarn.util.ConverterUtils
 import org.scalatest._
 
@@ -98,5 +99,12 @@ abstract class BaseIntegrationTestSuite extends FunSuite with Matchers with Befo
     cluster = Cluster.get()
     httpClient = new AsyncHttpClient()
     livyClient = new LivyRestClient(httpClient, livyEndpoint)
+  }
+
+  override def afterAll(): Unit = {
+    import scala.collection.JavaConverters._
+    val apps = cluster.yarnClient.getApplications.asScala
+    for (app: ApplicationReport <- apps)
+      cluster.yarnClient.killApplication(app.getApplicationId)
   }
 }

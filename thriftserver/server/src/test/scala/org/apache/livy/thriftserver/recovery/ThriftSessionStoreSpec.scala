@@ -20,15 +20,16 @@ package org.apache.livy.thriftserver.recovery
 import java.util
 import java.util.UUID
 
+import scala.util.Success
+
 import org.apache.hive.service.rpc.thrift.TProtocolVersion
-import org.apache.livy.server.recovery.StateStore
-import org.apache.livy.LivyConf
-import org.apache.livy.thriftserver.{StatementRecoveryMetadata, ThriftSessionRecoveryMetadata}
 import org.mockito.Mockito.{verify, when}
 import org.scalatest.{FunSpec, Matchers}
 import org.scalatest.mock.MockitoSugar.mock
 
-import scala.util.Success
+import org.apache.livy.server.recovery.StateStore
+import org.apache.livy.LivyConf
+import org.apache.livy.thriftserver.{StatementRecoveryMetadata, ThriftSessionRecoveryMetadata}
 
 class ThriftSessionStoreSpec extends FunSpec with Matchers {
 

@@ -20,17 +20,18 @@ package org.apache.livy.thriftserver
 import java.util
 import java.util.UUID
 
+import scala.util.{Failure, Try}
+
 import org.apache.hive.service.cli.SessionHandle
 import org.apache.hive.service.rpc.thrift.TProtocolVersion
+import org.mockito.Mockito.{verify, when}
+import org.scalatest.{FunSpec, Matchers}
+import org.scalatest.mock.MockitoSugar.mock
+
 import org.apache.livy.LivyConf
 import org.apache.livy.server.interactive.InteractiveSession
 import org.apache.livy.sessions.InteractiveSessionManager
 import org.apache.livy.thriftserver.recovery.ThriftSessionStore
-import org.scalatest.{FunSpec, Matchers}
-import org.mockito.Mockito.{verify, when}
-import org.scalatest.mock.MockitoSugar.mock
-
-import scala.util.{Failure, Try}
 
 class LivyThriftSessionManagerSpec extends FunSpec with Matchers {
   private val conf = new LivyConf()
@@ -65,6 +66,7 @@ class LivyThriftSessionManagerSpec extends FunSpec with Matchers {
       validMetadata.zip(mockLivySessions).foreach { case (m, s) =>
         when(sessionManager.get(m.get.id)).thenReturn(s)
         when(sessionStore.getStatements(m.get.id)).thenReturn(Seq.empty)
+        when(sessionManager.serviceWatch).thenReturn(None)
       }
 
       val thriftSessionManager = new LivyThriftSessionManager(server, conf, sessionStore)
@@ -87,6 +89,7 @@ class LivyThriftSessionManagerSpec extends FunSpec with Matchers {
       when(sessionManager.get(sessionId)).thenReturn(Some(mockSession))
       when(sessionStore.getStatements(sessionId)).thenReturn(Seq.empty)
       when(server.livySessionManager).thenReturn(sessionManager)
+      when(sessionManager.serviceWatch).thenReturn(None)
 
       val thriftSessionManager = new LivyThriftSessionManager(server, conf, sessionStore)
       thriftSessionManager.closeSession(sessionHandle)
@@ -102,7 +105,9 @@ class LivyThriftSessionManagerSpec extends FunSpec with Matchers {
       UUID.randomUUID())
   }
 
-  private def makeSessionMetadata(sessionId: Int, handle: SessionHandle): ThriftSessionRecoveryMetadata = {
+  private def makeSessionMetadata(
+    sessionId: Int,
+    handle: SessionHandle): ThriftSessionRecoveryMetadata = {
     makeSessionMetadata(
       sessionId,
       handle.getHandleIdentifier.getPublicId,

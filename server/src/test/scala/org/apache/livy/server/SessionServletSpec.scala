@@ -65,7 +65,7 @@ object SessionServletSpec {
         val owner = remoteUser(req)
         val impersonatedUser = accessManager.checkImpersonation(
           proxyUser(req, params.get(PROXY_USER)), owner)
-        new MockSession(sessionManager.nextId(), owner, impersonatedUser, conf)
+        new MockSession(sessionId, owner, impersonatedUser, conf)
       }
 
       override protected def clientSessionView(

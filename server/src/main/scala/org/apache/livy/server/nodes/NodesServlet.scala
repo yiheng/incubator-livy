@@ -18,8 +18,8 @@
 package org.apache.livy.server.nodes
 
 import org.apache.livy.server.JsonServlet
-import org.apache.livy.sessions.Session.RecoveryMetadata
 import org.apache.livy.sessions.{Session, SessionManager}
+import org.apache.livy.sessions.Session.RecoveryMetadata
 
 /**
  * Base servlet for getting all nodes info of livy server
@@ -36,7 +36,7 @@ class NodesServlet[S <: Session, R <: RecoveryMetadata](
   }
 
   get("/nodes") {
-    if(sessionManager.serviceWatch.isDefined) {
+    if (sessionManager.serviceWatch.isDefined) {
       Map("nodes" -> sessionManager.serviceWatch.get.getNodes)
     } else {
       Map("nodes" -> Set(s"${request.getServerName}:${request.getServerPort}"))

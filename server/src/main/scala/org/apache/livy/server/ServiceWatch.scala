@@ -17,6 +17,7 @@
 package org.apache.livy.server
 
 import scala.collection.mutable.{ArrayBuffer, Set}
+
 import org.apache.livy.LivyConf
 import org.apache.livy.LivyConf._
 import org.apache.livy.Logging
