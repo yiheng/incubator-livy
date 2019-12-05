@@ -567,6 +567,8 @@ object LivyThriftSessionManager extends Logging {
           key match {
             case v if v.startsWith("use:") && supportUseDatabase =>
               statements += s"use $value"
+              // change default database
+              extraLivyConf += (("spark.sql.database.default") -> value)
             // Process session configs for Livy session creation request
             case "set:hiveconf:livy.session.driverMemory" =>
               createInteractiveRequest.driverMemory = Some(value)
