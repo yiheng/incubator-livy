@@ -25,6 +25,7 @@ import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.Attributes;
 
 import org.apache.hadoop.hive.metastore.TableType;
@@ -57,7 +58,7 @@ import org.apache.thrift.TException;
 public class HiveDatabaseMetaData implements DatabaseMetaData {
 
   private final HiveConnection connection;
-  private final TCLIService.Iface client;
+  private TCLIService.Iface client;
   private final TSessionHandle sessHandle;
   private static final String CATALOG_SEPARATOR = ".";
 
@@ -125,15 +126,56 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
     return "instance";
   }
 
-  public ResultSet getCatalogs() throws SQLException {
-    TGetCatalogsResp catalogResp;
+  interface DoReq {
+    void doReq() throws Exception;
+  }
 
-    try {
-      catalogResp = client.GetCatalogs(new TGetCatalogsReq(sessHandle));
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+  private void multiActiveDoReq(DoReq req) throws SQLException {
+    boolean succ = false;
+    int tryTimes = 0;
+    while (tryTimes ++ < Utils.MULTI_ACTIVE_MAX_TRY_TIMES) {
+      try {
+        req.doReq();
+        succ = true;
+        break;
+      } catch (Exception e) {
+        try {
+          TCLIService.Iface c = connection.processReqException(e);
+          if (c != null) {
+            client = c;
+          }
+        } catch (Exception ex) {
+          break;
+        }
+      }
     }
-    Utils.verifySuccess(catalogResp.getStatus());
+
+    if(succ == false || tryTimes >= Utils.MULTI_ACTIVE_MAX_TRY_TIMES) {
+      throw new SQLException("multiActiveDoReq fail");
+    }
+  }
+
+  public ResultSet getCatalogs() throws SQLException {
+    TGetCatalogsResp catalogResp = null;
+
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        catalogResp = client.GetCatalogs(new TGetCatalogsReq(sessHandle));
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(catalogResp.getStatus());
+    } else {
+      final AtomicReference<TGetCatalogsResp> reference = new AtomicReference<TGetCatalogsResp>();
+      DoReq req = () -> {
+        TGetCatalogsResp resp = client.GetCatalogs(new TGetCatalogsReq(sessHandle));
+        reference.set(resp);
+        Utils.verifySuccess(resp.getStatus());
+      };
+
+      multiActiveDoReq(req);
+      catalogResp = reference.get();
+    }
 
     return new HiveQueryResultSet.Builder(connection)
     .setClient(client)
@@ -205,19 +247,31 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
 
   public ResultSet getColumns(String catalog, String schemaPattern,
       String tableNamePattern, String columnNamePattern) throws SQLException {
-    TGetColumnsResp colResp;
+    TGetColumnsResp colResp = null;
     TGetColumnsReq colReq = new TGetColumnsReq();
     colReq.setSessionHandle(sessHandle);
     colReq.setCatalogName(catalog);
     colReq.setSchemaName(schemaPattern);
     colReq.setTableName(tableNamePattern);
     colReq.setColumnName(columnNamePattern);
-    try {
-      colResp = client.GetColumns(colReq);
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        colResp = client.GetColumns(colReq);
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(colResp.getStatus());
+    } else {
+      final AtomicReference<TGetColumnsResp> reference = new AtomicReference<TGetColumnsResp>();
+      DoReq doReq = () -> {
+        TGetColumnsResp resp = client.GetColumns(colReq);
+        reference.set(resp);
+        Utils.verifySuccess(resp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      colResp = reference.get();
     }
-    Utils.verifySuccess(colResp.getStatus());
     // build the resultset from response
     return new HiveQueryResultSet.Builder(connection)
     .setClient(client)
@@ -317,19 +371,31 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
 
   public ResultSet getFunctions(String catalogName, String schemaPattern, String functionNamePattern)
       throws SQLException {
-    TGetFunctionsResp funcResp;
+    TGetFunctionsResp funcResp = null;
     TGetFunctionsReq getFunctionsReq = new TGetFunctionsReq();
     getFunctionsReq.setSessionHandle(sessHandle);
     getFunctionsReq.setCatalogName(catalogName);
     getFunctionsReq.setSchemaName(schemaPattern);
     getFunctionsReq.setFunctionName(functionNamePattern);
 
-    try {
-      funcResp = client.GetFunctions(getFunctionsReq);
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        funcResp = client.GetFunctions(getFunctionsReq);
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(funcResp.getStatus());
+    } else {
+      final AtomicReference<TGetFunctionsResp> reference = new AtomicReference<TGetFunctionsResp>();
+      DoReq doReq = () -> {
+        TGetFunctionsResp resp = client.GetFunctions(getFunctionsReq);
+        reference.set(resp);
+        Utils.verifySuccess(resp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      funcResp = reference.get();
     }
-    Utils.verifySuccess(funcResp.getStatus());
 
     return new HiveQueryResultSet.Builder(connection)
     .setClient(client)
@@ -561,7 +627,7 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
 
   public ResultSet getSchemas(String catalog, String schemaPattern)
       throws SQLException {
-    TGetSchemasResp schemaResp;
+    TGetSchemasResp schemaResp = null;
 
     TGetSchemasReq schemaReq = new TGetSchemasReq();
     schemaReq.setSessionHandle(sessHandle);
@@ -573,12 +639,24 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
     }
     schemaReq.setSchemaName(schemaPattern);
 
-    try {
-      schemaResp = client.GetSchemas(schemaReq);
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        schemaResp = client.GetSchemas(schemaReq);
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(schemaResp.getStatus());
+    } else {
+      final AtomicReference<TGetSchemasResp> reference = new AtomicReference<TGetSchemasResp>();
+      DoReq doReq = () -> {
+        TGetSchemasResp resp = client.GetSchemas(schemaReq);
+        reference.set(resp);
+        Utils.verifySuccess(resp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      schemaResp = reference.get();
     }
-    Utils.verifySuccess(schemaResp.getStatus());
 
     return new HiveQueryResultSet.Builder(connection)
     .setClient(client)
@@ -615,14 +693,26 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
   }
 
   public ResultSet getTableTypes() throws SQLException {
-    TGetTableTypesResp tableTypeResp;
+    TGetTableTypesResp tableTypeResp = null;
 
-    try {
-      tableTypeResp = client.GetTableTypes(new TGetTableTypesReq(sessHandle));
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        tableTypeResp = client.GetTableTypes(new TGetTableTypesReq(sessHandle));
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(tableTypeResp.getStatus());
+    } else {
+      final AtomicReference<TGetTableTypesResp> reference = new AtomicReference<TGetTableTypesResp>();
+      DoReq doReq = () -> {
+        TGetTableTypesResp resp = client.GetTableTypes(new TGetTableTypesReq(sessHandle));
+        reference.set(resp);
+        Utils.verifySuccess(resp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      tableTypeResp = reference.get();
     }
-    Utils.verifySuccess(tableTypeResp.getStatus());
 
     return new HiveQueryResultSet.Builder(connection)
     .setClient(client)
@@ -633,7 +723,7 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
 
   public ResultSet getTables(String catalog, String schemaPattern,
                              String tableNamePattern, String[] types) throws SQLException {
-    TGetTablesResp getTableResp;
+    TGetTablesResp getTableResp = null;
     if (schemaPattern == null) {
       // if schemaPattern is null it means that the schemaPattern value should not be used to narrow the search
       schemaPattern = "%";
@@ -650,12 +740,24 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
       getTableReq.setSchemaName(schemaPattern);
     }
 
-    try {
-      getTableResp = client.GetTables(getTableReq);
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        getTableResp = client.GetTables(getTableReq);
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(getTableResp.getStatus());
+    } else {
+      final AtomicReference<TGetTablesResp> reference = new AtomicReference<TGetTablesResp>();
+      DoReq doReq = () -> {
+        TGetTablesResp resp = client.GetTables(getTableReq);
+        reference.set(resp);
+        Utils.verifySuccess(resp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      getTableResp = reference.get();
     }
-    Utils.verifySuccess(getTableResp.getStatus());
 
     return new HiveQueryResultSet.Builder(connection)
     .setClient(client)
@@ -707,12 +809,26 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
     TGetTypeInfoResp getTypeInfoResp;
     TGetTypeInfoReq getTypeInfoReq = new TGetTypeInfoReq();
     getTypeInfoReq.setSessionHandle(sessHandle);
-    try {
-      getTypeInfoResp = client.GetTypeInfo(getTypeInfoReq);
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        getTypeInfoResp = client.GetTypeInfo(getTypeInfoReq);
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(getTypeInfoResp.getStatus());
+    } else {
+      final AtomicReference<TGetTypeInfoResp> reference = new AtomicReference<TGetTypeInfoResp>();
+      DoReq doReq = () -> {
+        TGetTypeInfoResp resp = client.GetTypeInfo(getTypeInfoReq);
+        reference.set(resp);
+        Utils.verifySuccess(resp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      getTypeInfoResp = reference.get();
     }
-    Utils.verifySuccess(getTypeInfoResp.getStatus());
+
     return new HiveQueryResultSet.Builder(connection)
     .setClient(client)
     .setSessionHandle(sessHandle)
@@ -1142,13 +1258,26 @@ public class HiveDatabaseMetaData implements DatabaseMetaData {
 
   private TGetInfoResp getServerInfo(TGetInfoType type) throws SQLException {
     TGetInfoReq req = new TGetInfoReq(sessHandle, type);
-    TGetInfoResp resp;
-    try {
-      resp = client.GetInfo(req);
-    } catch (TException e) {
-      throw new SQLException(e.getMessage(), "08S01", e);
+    TGetInfoResp resp = null;
+
+    if (connection.isMultiActiveOpen() == false) {
+      try {
+        resp = client.GetInfo(req);
+      } catch (TException e) {
+        throw new SQLException(e.getMessage(), "08S01", e);
+      }
+      Utils.verifySuccess(resp.getStatus());
+    } else {
+      final AtomicReference<TGetInfoResp> reference = new AtomicReference<TGetInfoResp>();
+      DoReq doReq = () -> {
+        TGetInfoResp getInfoResp = client.GetInfo(req);
+        reference.set(getInfoResp);
+        Utils.verifySuccess(getInfoResp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      resp = reference.get();
     }
-    Utils.verifySuccess(resp.getStatus());
     return resp;
   }
 }

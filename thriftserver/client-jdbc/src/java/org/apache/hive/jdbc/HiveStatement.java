@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.hive.service.cli.RowSet;
@@ -121,6 +122,39 @@ public class HiveStatement implements java.sql.Statement {
     this.isScrollableResultset = isScrollableResultset;
   }
 
+  interface DoReq {
+    void doReq() throws Exception;
+  }
+
+  private void multiActiveDoReq(DoReq req) throws SQLException {
+    transportLock.lock();
+
+    boolean succ = false;
+    int tryTimes = 0;
+    while (tryTimes ++ < Utils.MULTI_ACTIVE_MAX_TRY_TIMES) {
+      try {
+        req.doReq();
+        succ = true;
+        break;
+      } catch (Exception e) {
+        try {
+          TCLIService.Iface c = connection.processReqException(e);
+          if (c != null) {
+            client = c;
+          }
+        } catch (Exception ex) {
+          break;
+        }
+      }
+    }
+
+    transportLock.unlock();
+
+    if(succ == false || tryTimes >= Utils.MULTI_ACTIVE_MAX_TRY_TIMES) {
+      throw new SQLException("multiActiveDoReq fail");
+    }
+  }
+
   /*
    * (non-Javadoc)
    *
@@ -145,20 +179,33 @@ public class HiveStatement implements java.sql.Statement {
       return;
     }
 
-    transportLock.lock();
-    try {
-      if (stmtHandle != null) {
-        TCancelOperationReq cancelReq = new TCancelOperationReq(stmtHandle);
-        TCancelOperationResp cancelResp = client.CancelOperation(cancelReq);
-        Utils.verifySuccessWithInfo(cancelResp.getStatus());
+    if (connection.isMultiActiveOpen() == false) {
+      transportLock.lock();
+      try {
+        if (stmtHandle != null) {
+          TCancelOperationReq cancelReq = new TCancelOperationReq(stmtHandle);
+          TCancelOperationResp cancelResp = client.CancelOperation(cancelReq);
+          Utils.verifySuccessWithInfo(cancelResp.getStatus());
+        }
+      } catch (SQLException e) {
+        throw e;
+      } catch (Exception e) {
+        throw new SQLException(e.toString(), "08S01", e);
+      } finally {
+        transportLock.unlock();
       }
-    } catch (SQLException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new SQLException(e.toString(), "08S01", e);
-    } finally {
-      transportLock.unlock();
+    } else {
+      DoReq req = () -> {
+        if (stmtHandle != null) {
+          TCancelOperationReq cancelReq = new TCancelOperationReq(stmtHandle);
+          TCancelOperationResp cancelResp = client.CancelOperation(cancelReq);
+          Utils.verifySuccessWithInfo(cancelResp.getStatus());
+        }
+      };
+
+      multiActiveDoReq(req);
     }
+
     isCancelled = true;
   }
 
@@ -185,20 +232,33 @@ public class HiveStatement implements java.sql.Statement {
   }
 
   void closeClientOperation() throws SQLException {
-    transportLock.lock();
-    try {
-      if (stmtHandle != null) {
-        TCloseOperationReq closeReq = new TCloseOperationReq(stmtHandle);
-        TCloseOperationResp closeResp = client.CloseOperation(closeReq);
-        Utils.verifySuccessWithInfo(closeResp.getStatus());
+    if (connection.isMultiActiveOpen() == false) {
+      transportLock.lock();
+      try {
+        if (stmtHandle != null) {
+          TCloseOperationReq closeReq = new TCloseOperationReq(stmtHandle);
+          TCloseOperationResp closeResp = client.CloseOperation(closeReq);
+          Utils.verifySuccessWithInfo(closeResp.getStatus());
+        }
+      } catch (SQLException e) {
+        throw e;
+      } catch (Exception e) {
+        throw new SQLException(e.toString(), "08S01", e);
+      } finally {
+        transportLock.unlock();
       }
-    } catch (SQLException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new SQLException(e.toString(), "08S01", e);
-    } finally {
-      transportLock.unlock();
+    } else {
+      DoReq doReq = () -> {
+        if (stmtHandle != null) {
+          TCloseOperationReq closeReq = new TCloseOperationReq(stmtHandle);
+          TCloseOperationResp closeResp = client.CloseOperation(closeReq);
+          Utils.verifySuccessWithInfo(closeResp.getStatus());
+        }
+      };
+
+      multiActiveDoReq(doReq);
     }
+
     isQueryClosed = true;
     isExecuteStatementFailed = false;
     stmtHandle = null;
@@ -248,25 +308,37 @@ public class HiveStatement implements java.sql.Statement {
     execReq.setRunAsync(true);
     execReq.setConfOverlay(sessConf);
 
-    transportLock.lock();
-    try {
-      TExecuteStatementResp execResp = client.ExecuteStatement(execReq);
-      Utils.verifySuccessWithInfo(execResp.getStatus());
-      stmtHandle = execResp.getOperationHandle();
-      isExecuteStatementFailed = false;
-    } catch (SQLException eS) {
+    if (connection.isMultiActiveOpen() == false) {
+      transportLock.lock();
+      try {
+        TExecuteStatementResp execResp = client.ExecuteStatement(execReq);
+        Utils.verifySuccessWithInfo(execResp.getStatus());
+        stmtHandle = execResp.getOperationHandle();
+        isExecuteStatementFailed = false;
+      } catch (SQLException eS) {
+        isExecuteStatementFailed = true;
+        throw eS;
+      } catch (Exception ex) {
+        isExecuteStatementFailed = true;
+        throw new SQLException(ex.toString(), "08S01", ex);
+      } finally {
+        transportLock.unlock();
+      }
+    } else {
       isExecuteStatementFailed = true;
-      throw eS;
-    } catch (Exception ex) {
-      isExecuteStatementFailed = true;
-      throw new SQLException(ex.toString(), "08S01", ex);
-    } finally {
-      transportLock.unlock();
+      DoReq doReq = () -> {
+        TExecuteStatementResp execResp = client.ExecuteStatement(execReq);
+        Utils.verifySuccessWithInfo(execResp.getStatus());
+        stmtHandle = execResp.getOperationHandle();
+        isExecuteStatementFailed = false;
+      };
+
+      multiActiveDoReq(doReq);
     }
 
     TGetOperationStatusReq statusReq = new TGetOperationStatusReq(stmtHandle);
     boolean operationComplete = false;
-    TGetOperationStatusResp statusResp;
+    TGetOperationStatusResp statusResp = null;
 
     // Poll on the operation status, till the operation is complete
     while (!operationComplete) {
@@ -275,12 +347,24 @@ public class HiveStatement implements java.sql.Statement {
          * For an async SQLOperation, GetOperationStatus will use the long polling approach
          * It will essentially return after the HIVE_SERVER2_LONG_POLLING_TIMEOUT (a server config) expires
          */
-        transportLock.lock();
-        try {
-          statusResp = client.GetOperationStatus(statusReq);
-        } finally {
-          transportLock.unlock();
+
+        if (connection.isMultiActiveOpen() == false) {
+          transportLock.lock();
+          try {
+            statusResp = client.GetOperationStatus(statusReq);
+          } finally {
+            transportLock.unlock();
+          }
+        } else {
+          final AtomicReference<TGetOperationStatusResp> reference = new AtomicReference<>();
+          DoReq doReq = () -> {
+            reference.set(client.GetOperationStatus(statusReq));
+          };
+
+          multiActiveDoReq(doReq);
+          statusResp = reference.get();
         }
+
         Utils.verifySuccessWithInfo(statusResp.getStatus());
         if (statusResp.isSetOperationState()) {
           switch (statusResp.getOperationState()) {
@@ -807,32 +891,48 @@ public class HiveStatement implements java.sql.Statement {
 
     List<String> logs = new ArrayList<String>();
     TFetchResultsResp tFetchResultsResp = null;
-    transportLock.lock();
-    try {
-      if (stmtHandle != null) {
+
+    if (stmtHandle == null) {
+      if (isQueryClosed) {
+        throw new ClosedOrCancelledStatementException("Method getQueryLog() failed. The " +
+                "statement has been closed or cancelled.");
+      }
+      if (isExecuteStatementFailed) {
+        throw new SQLException("Method getQueryLog() failed. Because the stmtHandle in " +
+                "HiveStatement is null and the statement execution might fail.");
+      } else {
+        return logs;
+      }
+    }
+
+    if (connection.isMultiActiveOpen() == false) {
+      transportLock.lock();
+      try {
         TFetchResultsReq tFetchResultsReq = new TFetchResultsReq(stmtHandle,
             getFetchOrientation(incremental), fetchSize);
         tFetchResultsReq.setFetchType((short)1);
         tFetchResultsResp = client.FetchResults(tFetchResultsReq);
         Utils.verifySuccessWithInfo(tFetchResultsResp.getStatus());
-      } else {
-        if (isQueryClosed) {
-          throw new ClosedOrCancelledStatementException("Method getQueryLog() failed. The " +
-              "statement has been closed or cancelled.");
-        }
-        if (isExecuteStatementFailed) {
-          throw new SQLException("Method getQueryLog() failed. Because the stmtHandle in " +
-              "HiveStatement is null and the statement execution might fail.");
-        } else {
-          return logs;
-        }
+      } catch (SQLException e) {
+        throw e;
+      } catch (Exception e) {
+        throw new SQLException("Error when getting query log: " + e, e);
+      } finally {
+        transportLock.unlock();
       }
-    } catch (SQLException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new SQLException("Error when getting query log: " + e, e);
-    } finally {
-      transportLock.unlock();
+    } else {
+      final AtomicReference<TFetchResultsResp> reference = new AtomicReference<TFetchResultsResp>();
+      DoReq doReq = () -> {
+        TFetchResultsReq tFetchResultsReq = new TFetchResultsReq(stmtHandle,
+                getFetchOrientation(incremental), fetchSize);
+        tFetchResultsReq.setFetchType((short)1);
+        TFetchResultsResp fetchResultsResp = client.FetchResults(tFetchResultsReq);
+        reference.set(fetchResultsResp);
+        Utils.verifySuccessWithInfo(fetchResultsResp.getStatus());
+      };
+
+      multiActiveDoReq(doReq);
+      tFetchResultsResp = reference.get();
     }
 
     RowSet rowSet = RowSetFactory.create(tFetchResultsResp.getResults(),

@@ -28,6 +28,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.commons.logging.Log;
@@ -62,6 +63,7 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
   public static final Log LOG = LogFactory.getLog(HiveQueryResultSet.class);
 
   private TCLIService.Iface client;
+  private HiveConnection connection;
   private TOperationHandle stmtHandle;
   private TSessionHandle sessHandle;
   private int maxRows;
@@ -185,6 +187,7 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
 
   protected HiveQueryResultSet(Builder builder) throws SQLException {
     this.statement = builder.statement;
+    this.connection = (HiveConnection) builder.connection;
     this.client = builder.client;
     this.stmtHandle = builder.stmtHandle;
     this.sessHandle = builder.sessHandle;
@@ -242,6 +245,43 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
     return ret;
   }
 
+  interface DoReq {
+    void doReq() throws Exception;
+  }
+
+  private void multiActiveDoReq(DoReq req) throws SQLException {
+    if (transportLock != null) {
+      transportLock.lock();
+    }
+
+    boolean succ = false;
+    int tryTimes = 0;
+    while (tryTimes ++ < Utils.MULTI_ACTIVE_MAX_TRY_TIMES) {
+      try {
+        req.doReq();
+        succ = true;
+        break;
+      } catch (Exception e) {
+        try {
+          TCLIService.Iface c = connection.processReqException(e);
+          if (c != null) {
+            client = c;
+          }
+        } catch (Exception ex) {
+          break;
+        }
+      }
+    }
+
+    if (transportLock != null) {
+      transportLock.unlock();
+    }
+
+    if(succ == false || tryTimes >= Utils.MULTI_ACTIVE_MAX_TRY_TIMES) {
+      throw new SQLException("multiActiveDoReq fail");
+    }
+  }
+
   /**
    * Retrieve schema from the server
    */
@@ -249,18 +289,31 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
     try {
       TGetResultSetMetadataReq metadataReq = new TGetResultSetMetadataReq(stmtHandle);
       // TODO need session handle
-      TGetResultSetMetadataResp  metadataResp;
-      if (transportLock == null) {
-        metadataResp = client.GetResultSetMetadata(metadataReq);
-      } else {
-        transportLock.lock();
-        try {
+      TGetResultSetMetadataResp  metadataResp = null;
+
+      if (connection.isMultiActiveOpen() == false) {
+        if (transportLock == null) {
           metadataResp = client.GetResultSetMetadata(metadataReq);
-        } finally {
-          transportLock.unlock();
+        } else {
+          transportLock.lock();
+          try {
+            metadataResp = client.GetResultSetMetadata(metadataReq);
+          } finally {
+            transportLock.unlock();
+          }
         }
+        Utils.verifySuccess(metadataResp.getStatus());
+      } else {
+        final AtomicReference<TGetResultSetMetadataResp> reference = new AtomicReference<TGetResultSetMetadataResp>();
+        DoReq doReq = () -> {
+          TGetResultSetMetadataResp resp = client.GetResultSetMetadata(metadataReq);
+          reference.set(resp);
+          Utils.verifySuccess(resp.getStatus());
+        };
+
+        multiActiveDoReq(doReq);
+        metadataResp = reference.get();
       }
-      Utils.verifySuccess(metadataResp.getStatus());
 
       StringBuilder namesSb = new StringBuilder();
       StringBuilder typesSb = new StringBuilder();
@@ -351,18 +404,31 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
       if (fetchedRows == null || !fetchedRowsItr.hasNext()) {
         TFetchResultsReq fetchReq = new TFetchResultsReq(stmtHandle,
             orientation, fetchSize);
-        TFetchResultsResp fetchResp;
-        if (transportLock == null) {
-          fetchResp = client.FetchResults(fetchReq);
-        } else {
-          transportLock.lock();
-          try {
+        TFetchResultsResp fetchResp = null;
+
+        if (connection.isMultiActiveOpen() == false) {
+          if (transportLock == null) {
             fetchResp = client.FetchResults(fetchReq);
-          } finally {
-            transportLock.unlock();
+          } else {
+            transportLock.lock();
+            try {
+              fetchResp = client.FetchResults(fetchReq);
+            } finally {
+              transportLock.unlock();
+            }
           }
+          Utils.verifySuccessWithInfo(fetchResp.getStatus());
+        } else {
+          final AtomicReference<TFetchResultsResp> reference = new AtomicReference<TFetchResultsResp>();
+          DoReq doReq = () -> {
+            TFetchResultsResp resp = client.FetchResults(fetchReq);
+            reference.set(resp);
+            Utils.verifySuccessWithInfo(resp.getStatus());
+          };
+
+          multiActiveDoReq(doReq);
+          fetchResp = reference.get();
         }
-        Utils.verifySuccessWithInfo(fetchResp.getStatus());
 
         TRowSet results = fetchResp.getResults();
         fetchedRows = RowSetFactory.create(results, protocol);

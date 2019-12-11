@@ -63,6 +63,18 @@ public class Utils {
   static final String HIVE_SERVER2_RETRY_TRUE = "true";
   static final String HIVE_SERVER2_RETRY_FALSE = "false";
 
+  static final String MULTI_ACTIVE_REQ_TYPE = "multi-active.req.type";
+  static final String MULTI_ACTIVE_REQ_TYPE_CREATE_SESSION = "multi-active.create.session";
+  static final String MULTI_ACTIVE_REQ_TYPE_ASK_THRIFT_ADDR = "multi-active.ask.thrift.addr";
+
+  static final String MULTI_ACTIVE_SESSION_ID_RESP = "multi-active.session.id";
+  static final String MULTI_ACTIVE_SESSION_ID_REQ = "set:hiveconf:livy.server.sessionId";
+  static final String MULTI_ACTIVE_THRIFT_ADDR = "multi-active.thrift.addr";
+  static final int MULTI_ACTIVE_REDIRECT_CODE = 307;
+
+  static final int MULTI_ACTIVE_MAX_TRY_TIMES = 600;
+  static final int MULTI_ACTIVE_TRY_INTERVAL_MS = 1000;
+
   public static class JdbcConnectionParams {
     // Note on client side parameter naming convention:
     // Prefer using a shorter camelCase param name instead of using the same name as the
@@ -101,6 +113,7 @@ public class Utils {
     static final String SERVICE_DISCOVERY_MODE_NONE = "none";
     // Use ZooKeeper for indirection while using dynamic service discovery
     static final String SERVICE_DISCOVERY_MODE_ZOOKEEPER = "zooKeeper";
+    static final String MULTI_ACTIVE_SERVICE_DISCOVERY_MODE_ZOOKEEPER = "multiActiveZooKeeper";
     static final String ZOOKEEPER_NAMESPACE = "zooKeeperNamespace";
     // Default namespace value on ZooKeeper.
     // This value is used if the param "zooKeeperNamespace" is not specified in the JDBC Uri.
@@ -471,6 +484,31 @@ public class Utils {
     return authorities;
   }
 
+  public static boolean isServiceDiscoveryOpen(Map<String, String> map) {
+    String serviceDiscoveryMode = map.get(JdbcConnectionParams.SERVICE_DISCOVERY_MODE);
+
+    if (JdbcConnectionParams.SERVICE_DISCOVERY_MODE_ZOOKEEPER.equalsIgnoreCase(serviceDiscoveryMode)) {
+      return true;
+    }
+
+    if (JdbcConnectionParams.MULTI_ACTIVE_SERVICE_DISCOVERY_MODE_ZOOKEEPER.equalsIgnoreCase(serviceDiscoveryMode)) {
+      return true;
+    }
+
+
+    return false;
+  }
+
+  public static boolean isMultiActiveOpen(Map<String, String> map) {
+    String serviceDiscoveryMode = map.get(JdbcConnectionParams.SERVICE_DISCOVERY_MODE);
+
+    if (JdbcConnectionParams.MULTI_ACTIVE_SERVICE_DISCOVERY_MODE_ZOOKEEPER.equalsIgnoreCase(serviceDiscoveryMode)) {
+      return true;
+    }
+
+    return false;
+  }
+
   /**
    * Get a string representing a specific host:port
    * @param connParams
@@ -480,11 +518,7 @@ public class Utils {
    */
   private static String resolveAuthority(JdbcConnectionParams connParams)
       throws JdbcUriParseException, ZooKeeperHiveClientException {
-    String serviceDiscoveryMode =
-        connParams.getSessionVars().get(JdbcConnectionParams.SERVICE_DISCOVERY_MODE);
-    if ((serviceDiscoveryMode != null)
-        && (JdbcConnectionParams.SERVICE_DISCOVERY_MODE_ZOOKEEPER
-            .equalsIgnoreCase(serviceDiscoveryMode))) {
+    if (isServiceDiscoveryOpen(connParams.getSessionVars())) {
       // Resolve using ZooKeeper
       return resolveAuthorityUsingZooKeeper(connParams);
     } else {
