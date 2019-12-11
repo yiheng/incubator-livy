@@ -304,6 +304,8 @@ class LivyThriftSessionManager(
         createInteractiveRequest,
         server.sessionStore)
       onLivySessionOpened(newSession)
+      sessionStore.saveSession(livySessionId,
+        getThriftSessionMetadata(livySessionId, sessionHandle))
       newSession
     }
     val futureLivySession = Future {
@@ -331,7 +333,6 @@ class LivyThriftSessionManager(
           throw new ThriftSessionCreationException(Option(livySession), e)
       }
     }
-    sessionStore.saveSession(livySessionId, getThriftSessionMetadata(livySessionId, sessionHandle))
     sessionHandleToLivySession.put(sessionHandle, futureLivySession)
     sessionHandle
   }
