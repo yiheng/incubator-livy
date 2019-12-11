@@ -130,6 +130,15 @@ class ZooKeeperManager private(
     }
   }
 
+  def getString(key: String): Option[String] = {
+    val prefixedKey = prefixKey(key)
+    if (curatorClient.checkExists().forPath(prefixedKey) == null) {
+      None
+    } else {
+      Option(new String(curatorClient.getData().forPath(prefixedKey)))
+    }
+  }
+
   def getChildren(key: String): Seq[String] = {
     val prefixedKey = prefixKey(key)
     if (curatorClient.checkExists().forPath(prefixedKey) == null) {
@@ -186,6 +195,11 @@ class ZooKeeperManager private(
     val data = serializeToBytes(value)
     curatorClient.create.creatingParentsIfNeeded.
       withMode(CreateMode.EPHEMERAL).forPath(prefixKey(path), data)
+  }
+
+  def createStringEphemeralNode(path: String, data: String): Unit = {
+    curatorClient.create.creatingParentsIfNeeded.
+      withMode(CreateMode.EPHEMERAL).forPath(prefixKey(path), data.getBytes)
   }
 
   private def prefixKey(key: String) = s"/$zkKeyPrefix/$key"

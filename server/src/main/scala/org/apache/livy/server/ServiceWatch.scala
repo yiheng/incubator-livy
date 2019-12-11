@@ -45,7 +45,7 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
   def register(): Unit = {
     if (livyConf.getBoolean(THRIFT_SERVER_ENABLED)) {
       val thriftPort = livyConf.getInt(THRIFT_SERVER_PORT)
-      ZooKeeperManager.get.createEphemeralNode(
+      ZooKeeperManager.get.createStringEphemeralNode(
         livyConf.get(THRIFT_ZOOKEEPER_NAMESPACE) + "/" + serverIP, s"$serverIP:$thriftPort")
     }
 
@@ -69,7 +69,11 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
 
   def searchThrift(sessionId: Int): (String, Int) = {
     require(livyConf.getBoolean(THRIFT_SERVER_ENABLED), "Thrift service is not configured")
-    search(sessionId, livyConf.get(THRIFT_ZOOKEEPER_NAMESPACE))
+
+    val key = consistentHash.searchNode(sessionId.toString).get
+    val path = livyConf.get(THRIFT_ZOOKEEPER_NAMESPACE)  + "/" + key
+    val hostPort = ZooKeeperManager.get.getString(path).get.split(":")
+    (hostPort(0), hostPort(1).toInt)
   }
 
   def registerNodeAddListener(f : String => Unit): Unit = {
