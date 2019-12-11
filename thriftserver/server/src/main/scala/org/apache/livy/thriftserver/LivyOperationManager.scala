@@ -90,6 +90,15 @@ class LivyOperationManager(val livyThriftSessionManager: LivyThriftSessionManage
     operation
   }
 
+  def getSessionHandle(operationHandle: OperationHandle): SessionHandle = {
+    val operation = handleToOperation.get(operationHandle)
+    if (operation == null) {
+      return null
+    }
+
+    return operation.sessionHandle
+  }
+
   def newExecuteStatementOperation(
       sessionHandle: SessionHandle,
       statement: String,

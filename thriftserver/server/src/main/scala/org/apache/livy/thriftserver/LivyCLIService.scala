@@ -83,6 +83,16 @@ class LivyCLIService(server: LivyThriftServer)
 
   def getSessionManager: LivyThriftSessionManager = sessionManager
 
+  def containSession(sessionId: Int): Boolean =
+    server.livySessionManager.serviceWatch.get.contains(sessionId)
+
+  def getSessionInfo(sessionHandle: SessionHandle): SessionInfo =
+    server.getSessionManager.getSessionInfo(sessionHandle)
+
+  def getSessionHandle(operationHandle: OperationHandle): SessionHandle = {
+    sessionManager.operationManager.getSessionHandle(operationHandle)
+  }
+
   @throws[HiveSQLException]
   def getInfo(sessionHandle: SessionHandle, getInfoType: GetInfoType): GetInfoValue = {
     getInfoType match {

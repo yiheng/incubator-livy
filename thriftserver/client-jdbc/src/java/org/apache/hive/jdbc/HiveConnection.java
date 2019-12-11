@@ -591,8 +591,8 @@ public class HiveConnection implements java.sql.Connection {
           // maybe all livy crashed, so catch the exception and wait the cluster to start up
           try {
             createClient();
-          } catch (Exception e) {
-            LOG.error("Error create client", e);
+          } catch (Exception ex) {
+            LOG.error("Error create client", ex);
           }
         }
 
@@ -715,8 +715,8 @@ public class HiveConnection implements java.sql.Connection {
         // maybe all livy crashed, so catch the exception and wait the cluster to start up
         try {
           createClient();
-        } catch (Exception e) {
-          LOG.error("Error create client", e);
+        } catch (Exception ex) {
+          LOG.error("Error create client", ex);
         }
 
         try {

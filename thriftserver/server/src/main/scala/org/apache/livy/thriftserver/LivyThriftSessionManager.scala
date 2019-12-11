@@ -40,8 +40,11 @@ import org.apache.hive.service.server.ThreadFactoryWithGarbageCleanup
 import org.apache.livy.{ConcurrentBoundedLinkedQueue, LivyConf, Logging, OperationMessageManager}
 import org.apache.livy.rsc.RSCConf
 import org.apache.livy.server.interactive.{CreateInteractiveRequest, InteractiveSession}
+import org.apache.livy.server.ServiceWatch
 import org.apache.livy.sessions.Session.RecoveryMetadata
 import org.apache.livy.sessions.Spark
+import org.apache.livy.thriftserver.MultiActiveConstants._
+import org.apache.livy.thriftserver.MultiActiveReqType._
 import org.apache.livy.thriftserver.SessionStates._
 import org.apache.livy.thriftserver.recovery.ThriftSessionStore
 import org.apache.livy.thriftserver.rpc.RpcClient
@@ -161,10 +164,46 @@ class LivyThriftSessionManager(
     }
   }
 
+  server.livySessionManager.serviceWatch.foreach(sw => {
+    sw.registerNodeAddListener(_ => {
+      recover()
+      filterSession(sw)
+    })
+
+    sw.registerNodeRemoveListener(_ => {
+      recover()
+      filterSession(sw)
+    })
+  })
+
+  // In multi-active mode with cluster: LivyA and LivyB, when LivyC join in,
+  // some sessions owned by LivyA and LivyB should be migrated to LivyC,
+  // so filter these sessions in LivyA and LivyB
+  private def filterSession(serviceWatch: ServiceWatch): Unit = {
+    val iter = sessionInfo.entrySet().iterator()
+    while (iter.hasNext) {
+      val entry = iter.next()
+      val sessionHandle = entry.getKey
+      val info = entry.getValue
+
+      if (!serviceWatch.contains(info.sessionId)) {
+        iter.remove()
+
+        if (sessionHandleToLivySession.contains(sessionHandle)) {
+          sessionHandleToLivySession.remove(sessionHandle)
+        }
+
+        if (managedLivySessionActiveUsers.contains(info.sessionId)) {
+          managedLivySessionActiveUsers.remove(info.sessionId)
+        }
+      }
+    }
+  }
+
   private def recover(): Unit = {
     val sessionMetadata = sessionStore.getAllSessions()
     sessionMetadata.flatMap(_.toOption)
-      .filter(r => !server.livySessionManager.contains(r.id))
+      .filter(r => !contains(r))
       .filter(r => {
         if (server.livySessionManager.serviceWatch.isDefined) {
           server.livySessionManager.serviceWatch.get.contains(r.id)
@@ -179,6 +218,13 @@ class LivyThriftSessionManager(
     recoveryFailure.foreach(ex => error(ex.getMessage, ex.getCause))
   }
 
+  private def contains(metaData: ThriftSessionRecoveryMetadata): Boolean = {
+    val handleIdentifier = new HandleIdentifier(metaData.publicId, metaData.secretId)
+    val protocolVersion = TProtocolVersion.findByValue(metaData.protocolVersion)
+    val sessionHandle = new SessionHandle(handleIdentifier, protocolVersion)
+    sessionInfo.containsKey(sessionHandle)
+  }
+
   private def sessionRecovery(metaData: ThriftSessionRecoveryMetadata): Unit = {
     val handleIdentifier = new HandleIdentifier(metaData.publicId, metaData.secretId)
     val protocolVersion = TProtocolVersion.findByValue(metaData.protocolVersion)
@@ -191,6 +237,7 @@ class LivyThriftSessionManager(
     }
     sessionHandleToLivySession.put(sessionHandle, Future(livySession.get))
     sessionInfo.put(sessionHandle, new SessionInfo(
+      metaData.id,
       metaData.userName,
       metaData.ipAddress,
       metaData.forwardedAddresses,
@@ -223,30 +270,31 @@ class LivyThriftSessionManager(
    */
   private def getOrCreateLivySession(
       sessionHandle: SessionHandle,
-      sessionId: Option[Int],
+      sessionId: Int,
       username: String,
-      createLivySession: () => InteractiveSession): InteractiveSession = {
-    sessionId match {
-      case Some(id) =>
-        server.livySessionManager.get(id) match {
-          case None =>
-            warn(s"InteractiveSession $id doesn't exist.")
-            throw new IllegalArgumentException(s"Session $id doesn't exist.")
-          case Some(session) if !server.isAllowedToUse(username, session) =>
-            warn(s"$username has no modify permissions to InteractiveSession $id.")
-            throw new IllegalAccessException(
-              s"$username is not allowed to use InteractiveSession $id.")
-          case Some(session) =>
-            if (session.state.isActive) {
-              info(s"Reusing Session $id for $sessionHandle.")
-              session
-            } else {
-              warn(s"InteractiveSession $id is not active anymore.")
-              throw new IllegalArgumentException(s"Session $id is not active anymore.")
-            }
-        }
+      createLivySession: () => InteractiveSession,
+      reqType: MultiActiveReqType): InteractiveSession = {
+    server.livySessionManager.get(sessionId) match {
       case None =>
-        createLivySession()
+        reqType match {
+          case MultiActiveReqType.CREATE_SESSION => createLivySession()
+          case MultiActiveReqType.ATTACH_OLD_SESSION => {
+            warn(s"InteractiveSession $sessionId doesn't exist.")
+            throw new IllegalArgumentException(s"Session $sessionId doesn't exist.")
+          }
+        }
+      case Some(session) if !server.isAllowedToUse(username, session) =>
+        warn(s"$username has no modify permissions to InteractiveSession $sessionId.")
+        throw new IllegalAccessException(
+          s"$username is not allowed to use InteractiveSession $sessionId.")
+      case Some(session) =>
+        if (session.state.isActive) {
+          info(s"Reusing Session $sessionId for $sessionHandle.")
+          session
+        } else {
+          warn(s"InteractiveSession $sessionId is not active anymore.")
+          throw new IllegalArgumentException(s"Session $sessionId is not active anymore.")
+        }
     }
   }
 
@@ -274,6 +322,26 @@ class LivyThriftSessionManager(
     }
   }
 
+  private def verifyOwnSession(sessionId: Int): Unit = {
+    if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED) == false) {
+      return
+    }
+
+    if (server.livySessionManager.serviceWatch.get.contains(sessionId)) {
+      return
+    }
+
+    val (thriftIP, thriftPort) = server.livySessionManager.serviceWatch.get.searchThrift(sessionId)
+    val redirectMsg = MultiActiveConstants.getRedirectMsg(sessionId, s"$thriftIP:$thriftPort")
+    throw new HiveSQLException(redirectMsg, "", MultiActiveConstants.MULTI_ACTIVE_REDIRECT_CODE)
+  }
+
+  private def responseThriftAddr(sessionId: Int): Unit = {
+    val (thriftIP, thriftPort) = server.livySessionManager.serviceWatch.get.searchThrift(sessionId)
+    val redirectMsg = MultiActiveConstants.getRedirectMsg(sessionId, s"$thriftIP:$thriftPort")
+    throw new HiveSQLException(redirectMsg, "", MultiActiveConstants.MULTI_ACTIVE_REDIRECT_CODE)
+  }
+
   def openSession(
       protocol: TProtocolVersion,
       username: String,
@@ -282,16 +350,31 @@ class LivyThriftSessionManager(
       sessionConf: JMap[String, String],
       withImpersonation: Boolean,
       delegationToken: String): SessionHandle = {
-    val sessionHandle = new SessionHandle(protocol)
+    val (initStatements, createInteractiveRequest, sessionId, reqType) =
+      LivyThriftSessionManager.processSessionConf(sessionConf, supportUseDatabase)
+
+    if (reqType == MultiActiveReqType.ASK_THRIFT_ADDR) {
+      responseThriftAddr(sessionId.get)
+    }
+
+    val livySessionId = {
+      if (sessionId.isDefined) {
+        sessionId.get
+      } else {
+        server.livySessionManager.nextId()
+      }
+    }
+
+    verifyOwnSession(livySessionId)
+
     incrementConnections(username, ipAddress, SessionInfo.getForwardedAddresses)
 
+    val sessionHandle = new SessionHandle(protocol)
     val operationMessages = createOperationMessages
     sessionInfo.put(sessionHandle,
-      new SessionInfo(username, ipAddress, SessionInfo.getForwardedAddresses, operationMessages,
-        protocol))
-    val (initStatements, createInteractiveRequest, sessionId) =
-      LivyThriftSessionManager.processSessionConf(sessionConf, supportUseDatabase)
-    val livySessionId = server.livySessionManager.nextId()
+      new SessionInfo(livySessionId, username, ipAddress, SessionInfo.getForwardedAddresses,
+        operationMessages, protocol))
+
     val createLivySession = () => {
       createInteractiveRequest.kind = Spark
       val newSession = InteractiveSession.create(
@@ -316,7 +399,8 @@ class LivyThriftSessionManager(
           override def run(): InteractiveSession = {
             OperationMessageManager.set(operationMessages.orNull)
             livySession =
-              getOrCreateLivySession(sessionHandle, sessionId, username, createLivySession)
+              getOrCreateLivySession(sessionHandle,
+                livySessionId, username, createLivySession, reqType)
             synchronized {
               managedLivySessionActiveUsers.get(livySession.id).foreach { numUsers =>
                 managedLivySessionActiveUsers(livySession.id) = numUsers + 1
@@ -646,7 +730,8 @@ object LivyThriftSessionManager extends Logging {
 
   private def processSessionConf(
       sessionConf: JMap[String, String],
-      supportUseDatabase: Boolean): (List[String], CreateInteractiveRequest, Option[Int]) = {
+      supportUseDatabase: Boolean):
+  (List[String], CreateInteractiveRequest, Option[Int], MultiActiveReqType) = {
     if (null != sessionConf && !sessionConf.isEmpty) {
       val statements = new mutable.ListBuffer[String]
       val extraLivyConf = new mutable.ListBuffer[(String, String)]
@@ -688,6 +773,7 @@ object LivyThriftSessionManager extends Logging {
           }
       }
       createInteractiveRequest.conf = extraLivyConf.toMap
+
       val sessionId = Option(sessionConf.get(livySessionIdConfigKey)).flatMap { id =>
         val res = Try(id.toInt)
         if (res.isFailure) {
@@ -697,9 +783,26 @@ object LivyThriftSessionManager extends Logging {
           Some(res.get)
         }
       }
-      (statements.toList, createInteractiveRequest, sessionId)
+
+      val reqType = {
+        if (sessionId.isEmpty) {
+          MultiActiveReqType.CREATE_SESSION
+        } else if (sessionConf.containsKey(MultiActiveConstants.MULTI_ACTIVE_REQ_TYPE)) {
+          val typeStr = sessionConf.get(MultiActiveConstants.MULTI_ACTIVE_REQ_TYPE)
+          typeStr match {
+            case MultiActiveConstants.MULTI_ACTIVE_REQ_TYPE_CREATE_SESSION =>
+              MultiActiveReqType.CREATE_SESSION
+            case MultiActiveConstants.MULTI_ACTIVE_REQ_TYPE_ASK_THRIFT_ADDR =>
+              MultiActiveReqType.ASK_THRIFT_ADDR
+          }
+        } else {
+          MultiActiveReqType.ATTACH_OLD_SESSION
+        }
+      }
+
+      (statements.toList, createInteractiveRequest, sessionId, reqType)
     } else {
-      (List(), new CreateInteractiveRequest, None)
+      (List(), new CreateInteractiveRequest, None, MultiActiveReqType.INVALID)
     }
   }
 }

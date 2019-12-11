@@ -39,8 +39,12 @@ import org.apache.thrift.TException
 import org.apache.thrift.server.ServerContext
 
 import org.apache.livy.LivyConf
-import org.apache.livy.thriftserver.{LivyCLIService, LivyThriftServer, SessionInfo, ThriftService}
 import org.apache.livy.thriftserver.auth.AuthFactory
+import org.apache.livy.thriftserver.LivyCLIService
+import org.apache.livy.thriftserver.LivyThriftServer
+import org.apache.livy.thriftserver.MultiActiveConstants
+import org.apache.livy.thriftserver.SessionInfo
+import org.apache.livy.thriftserver.ThriftService
 
 /**
  * This class is ported from Hive. We cannot reuse Hive's one because we need to use the
@@ -114,63 +118,127 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
 
   def getServerIPAddress: InetAddress = serverIPAddress
 
+  private def responseRedirect(response: AnyRef): Unit = {
+    val respClz = Class.forName(response.getClass.getName)
+    val setStatusMethod = respClz.getMethod("setStatus", classOf[TStatus])
+    val e = new HiveSQLException("", "", MultiActiveConstants.MULTI_ACTIVE_REDIRECT_CODE)
+    setStatusMethod.invoke(response, HiveSQLException.toTStatus(e))
+    return
+  }
+
+  private def processReq(request: AnyRef, response: AnyRef)(func: => Unit): Unit = {
+    if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED) == false) {
+      func
+      return
+    }
+
+    val reqClz = Class.forName(request.getClass.getName)
+    val getSessionHandleMethod = reqClz.getMethod("getSessionHandle")
+    val handle = getSessionHandleMethod.invoke(request).asInstanceOf[TSessionHandle]
+    val sessionHandle = new SessionHandle(handle)
+    val sessionInfo = cliService.getSessionInfo(sessionHandle)
+
+    if (sessionInfo == null || cliService.containSession(sessionInfo.sessionId) == false) {
+      responseRedirect(response)
+      return
+    }
+
+    func
+  }
+
+  private def processOperationReq(request: AnyRef, response: AnyRef)(func: => Unit): Unit = {
+    if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED) == false) {
+      func
+      return
+    }
+    val reqClz = Class.forName(request.getClass.getName)
+    val getOperationHandleMethod = reqClz.getMethod("getOperationHandle")
+    val handle = getOperationHandleMethod.invoke(request).asInstanceOf[TOperationHandle]
+    val operationHandle = new OperationHandle(handle)
+    val sessionHandle = cliService.getSessionHandle(operationHandle)
+    if (sessionHandle == null) {
+      responseRedirect(response)
+      return
+    }
+
+    val sessionInfo = cliService.getSessionInfo(sessionHandle)
+    if (sessionInfo == null || cliService.containSession(sessionInfo.sessionId) == false) {
+      responseRedirect(response)
+      return
+    }
+
+    func
+  }
+
   @throws[TException]
   override def GetDelegationToken(req: TGetDelegationTokenReq): TGetDelegationTokenResp = {
     val resp: TGetDelegationTokenResp = new TGetDelegationTokenResp
-    if (!hiveAuthFactory.isSASLKerberosUser) {
-      resp.setStatus(unsecureTokenErrorStatus)
-    } else {
-      try {
-        val token = cliService.getDelegationToken(
-          new SessionHandle(req.getSessionHandle), hiveAuthFactory, req.getOwner, req.getRenewer)
-        resp.setDelegationToken(token)
-        resp.setStatus(ThriftCLIService.OK_STATUS)
-      } catch {
-        case e: HiveSQLException =>
-          error("Error obtaining delegation token", e)
-          val tokenErrorStatus = HiveSQLException.toTStatus(e)
-          tokenErrorStatus.setSqlState("42000")
-          resp.setStatus(tokenErrorStatus)
+
+    processReq(req, resp) {
+      if (!hiveAuthFactory.isSASLKerberosUser) {
+        resp.setStatus(unsecureTokenErrorStatus)
+      } else {
+        try {
+          val token = cliService.getDelegationToken(
+            new SessionHandle(req.getSessionHandle), hiveAuthFactory, req.getOwner, req.getRenewer)
+          resp.setDelegationToken(token)
+          resp.setStatus(ThriftCLIService.OK_STATUS)
+        } catch {
+          case e: HiveSQLException =>
+            error("Error obtaining delegation token", e)
+            val tokenErrorStatus = HiveSQLException.toTStatus(e)
+            tokenErrorStatus.setSqlState("42000")
+            resp.setStatus(tokenErrorStatus)
+        }
       }
     }
+
     resp
   }
 
   @throws[TException]
   override def CancelDelegationToken(req: TCancelDelegationTokenReq): TCancelDelegationTokenResp = {
     val resp: TCancelDelegationTokenResp = new TCancelDelegationTokenResp
-    if (!hiveAuthFactory.isSASLKerberosUser) {
-      resp.setStatus(unsecureTokenErrorStatus)
-    } else {
-      try {
-        cliService.cancelDelegationToken(
-          new SessionHandle(req.getSessionHandle), hiveAuthFactory, req.getDelegationToken)
-        resp.setStatus(ThriftCLIService.OK_STATUS)
-      } catch {
-        case e: HiveSQLException =>
-          error("Error canceling delegation token", e)
-          resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      if (!hiveAuthFactory.isSASLKerberosUser) {
+        resp.setStatus(unsecureTokenErrorStatus)
+      } else {
+        try {
+          cliService.cancelDelegationToken(
+            new SessionHandle(req.getSessionHandle), hiveAuthFactory, req.getDelegationToken)
+          resp.setStatus(ThriftCLIService.OK_STATUS)
+        } catch {
+          case e: HiveSQLException =>
+            error("Error canceling delegation token", e)
+            resp.setStatus(HiveSQLException.toTStatus(e))
+        }
       }
     }
+
     resp
   }
 
   @throws[TException]
   override def RenewDelegationToken(req: TRenewDelegationTokenReq): TRenewDelegationTokenResp = {
     val resp: TRenewDelegationTokenResp = new TRenewDelegationTokenResp
-    if (!hiveAuthFactory.isSASLKerberosUser) {
-      resp.setStatus(unsecureTokenErrorStatus)
-    } else {
-      try {
-        cliService.renewDelegationToken(
-          new SessionHandle(req.getSessionHandle), hiveAuthFactory, req.getDelegationToken)
-        resp.setStatus(ThriftCLIService.OK_STATUS)
-      } catch {
-        case e: HiveSQLException =>
-          error("Error obtaining renewing token", e)
-          resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      if (!hiveAuthFactory.isSASLKerberosUser) {
+        resp.setStatus(unsecureTokenErrorStatus)
+      } else {
+        try {
+          cliService.renewDelegationToken(
+            new SessionHandle(req.getSessionHandle), hiveAuthFactory, req.getDelegationToken)
+          resp.setStatus(ThriftCLIService.OK_STATUS)
+        } catch {
+          case e: HiveSQLException =>
+            error("Error obtaining renewing token", e)
+            resp.setStatus(HiveSQLException.toTStatus(e))
+        }
       }
     }
+
     resp
   }
 
@@ -193,6 +261,10 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
       val defaultFetchSize =
         Integer.toString(livyConf.getInt(LivyConf.THRIFT_RESULTSET_DEFAULT_FETCH_SIZE))
       configurationMap.put(LivyConf.THRIFT_RESULTSET_DEFAULT_FETCH_SIZE.key, defaultFetchSize)
+      if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)) {
+        configurationMap.put(MultiActiveConstants.MULTI_ACTIVE_SESSION_ID,
+          cliService.getSessionInfo(sessionHandle).sessionId.toString)
+      }
       resp.setConfiguration(configurationMap)
       resp.setStatus(ThriftCLIService.OK_STATUS)
       Option(currentServerContext.get).foreach { context =>
@@ -305,6 +377,7 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
     val userName = getUserName(req)
     val ipAddress = getIpAddress
     val protocol = getMinVersion(LivyCLIService.SERVER_VERSION, req.getClient_protocol)
+    res.setServerProtocolVersion(protocol)
     val sessionHandle =
       if (livyConf.getBoolean(LivyConf.THRIFT_ENABLE_DOAS) && (userName != null)) {
         cliService.openSessionWithImpersonation(
@@ -312,7 +385,6 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
       } else {
         cliService.openSession(protocol, userName, req.getPassword, ipAddress, req.getConfiguration)
       }
-    res.setServerProtocolVersion(protocol)
     sessionHandle
   }
 
@@ -338,328 +410,396 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
   @throws[TException]
   override def CloseSession(req: TCloseSessionReq): TCloseSessionResp = {
     val resp = new TCloseSessionResp
-    try {
-      val sessionHandle = new SessionHandle(req.getSessionHandle)
-      cliService.closeSession(sessionHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-      Option(currentServerContext.get).foreach { ctx =>
-        ctx.asInstanceOf[ThriftCLIServerContext].setSessionHandle(null)
+
+    processReq(req, resp) {
+      try {
+        val sessionHandle = new SessionHandle(req.getSessionHandle)
+        cliService.closeSession(sessionHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+        Option(currentServerContext.get).foreach { ctx =>
+          ctx.asInstanceOf[ThriftCLIServerContext].setSessionHandle(null)
+        }
+      } catch {
+        case e: Exception =>
+          warn("Error closing session: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
       }
-    } catch {
-      case e: Exception =>
-        warn("Error closing session: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
     }
+
     resp
   }
 
   @throws[TException]
   override def GetInfo(req: TGetInfoReq): TGetInfoResp = {
     val resp = new TGetInfoResp
-    try {
-      val getInfoValue = cliService.getInfo(
-        new SessionHandle(req.getSessionHandle), GetInfoType.getGetInfoType(req.getInfoType))
-      resp.setInfoValue(getInfoValue.toTGetInfoValue)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting info: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val getInfoValue = cliService.getInfo(
+          new SessionHandle(req.getSessionHandle), GetInfoType.getGetInfoType(req.getInfoType))
+        resp.setInfoValue(getInfoValue.toTGetInfoValue)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting info: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def ExecuteStatement(req: TExecuteStatementReq): TExecuteStatementResp = {
     val resp = new TExecuteStatementResp
-    try {
-      val sessionHandle = new SessionHandle(req.getSessionHandle)
-      val statement = req.getStatement
-      val confOverlay = req.getConfOverlay
-      val runAsync = req.isRunAsync
-      val queryTimeout = req.getQueryTimeout
-      val operationHandle = if (runAsync) {
+    processReq(req, resp) {
+      try {
+        val sessionHandle = new SessionHandle(req.getSessionHandle)
+        val statement = req.getStatement
+        val confOverlay = req.getConfOverlay
+        val runAsync = req.isRunAsync
+        val queryTimeout = req.getQueryTimeout
+        val operationHandle = if (runAsync) {
           cliService.executeStatementAsync(sessionHandle, statement, confOverlay, queryTimeout)
         } else {
           cliService.executeStatement(sessionHandle, statement, confOverlay, queryTimeout)
         }
-      resp.setOperationHandle(operationHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error executing statement: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+        resp.setOperationHandle(operationHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error executing statement: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetTypeInfo(req: TGetTypeInfoReq): TGetTypeInfoResp = {
     val resp = new TGetTypeInfoResp
-    try {
-      val operationHandle = cliService.getTypeInfo(createSessionHandle(req.getSessionHandle))
-      resp.setOperationHandle(operationHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting type info: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val operationHandle = cliService.getTypeInfo(createSessionHandle(req.getSessionHandle))
+        resp.setOperationHandle(operationHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting type info: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetCatalogs(req: TGetCatalogsReq): TGetCatalogsResp = {
     val resp = new TGetCatalogsResp
-    try {
-      val opHandle = cliService.getCatalogs(createSessionHandle(req.getSessionHandle))
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting catalogs: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getCatalogs(createSessionHandle(req.getSessionHandle))
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting catalogs: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetSchemas(req: TGetSchemasReq): TGetSchemasResp = {
     val resp = new TGetSchemasResp
-    try {
-      val opHandle = cliService.getSchemas(createSessionHandle(req.getSessionHandle),
-        req.getCatalogName, req.getSchemaName)
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting schemas: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getSchemas(createSessionHandle(req.getSessionHandle),
+          req.getCatalogName, req.getSchemaName)
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting schemas: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetTables(req: TGetTablesReq): TGetTablesResp = {
     val resp = new TGetTablesResp
-    try {
-      val opHandle = cliService.getTables(
-        createSessionHandle(req.getSessionHandle),
-        req.getCatalogName,
-        req.getSchemaName,
-        req.getTableName,
-        req.getTableTypes)
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting tables: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getTables(
+          createSessionHandle(req.getSessionHandle),
+          req.getCatalogName,
+          req.getSchemaName,
+          req.getTableName,
+          req.getTableTypes)
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting tables: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetTableTypes(req: TGetTableTypesReq): TGetTableTypesResp = {
     val resp = new TGetTableTypesResp
-    try {
-      val opHandle = cliService.getTableTypes(createSessionHandle(req.getSessionHandle))
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting table types: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getTableTypes(createSessionHandle(req.getSessionHandle))
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting table types: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetColumns(req: TGetColumnsReq): TGetColumnsResp = {
     val resp = new TGetColumnsResp
-    try {
-      val opHandle = cliService.getColumns(
-        createSessionHandle(req.getSessionHandle),
-        req.getCatalogName,
-        req.getSchemaName,
-        req.getTableName,
-        req.getColumnName)
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting columns: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getColumns(
+          createSessionHandle(req.getSessionHandle),
+          req.getCatalogName,
+          req.getSchemaName,
+          req.getTableName,
+          req.getColumnName)
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting columns: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetFunctions(req: TGetFunctionsReq): TGetFunctionsResp = {
     val resp = new TGetFunctionsResp
-    try {
-      val opHandle = cliService.getFunctions(
-        createSessionHandle(req.getSessionHandle),
-        req.getCatalogName,
-        req.getSchemaName,
-        req.getFunctionName)
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting functions: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getFunctions(
+          createSessionHandle(req.getSessionHandle),
+          req.getCatalogName,
+          req.getSchemaName,
+          req.getFunctionName)
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting functions: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetOperationStatus(req: TGetOperationStatusReq): TGetOperationStatusResp = {
     val resp = new TGetOperationStatusResp
-    val operationHandle = new OperationHandle(req.getOperationHandle)
-    try {
-      val operationStatus = cliService.getOperationStatus(operationHandle, req.isGetProgressUpdate)
-      resp.setOperationState(operationStatus.state.toTOperationState)
-      resp.setErrorMessage(operationStatus.state.getErrorMessage)
-      val opException = operationStatus.operationException
-      resp.setOperationStarted(operationStatus.operationStarted)
-      resp.setOperationCompleted(operationStatus.operationCompleted)
-      resp.setHasResultSet(operationStatus.hasResultSet)
-      val executionStatus = TJobExecutionStatus.NOT_AVAILABLE
-      resp.setProgressUpdateResponse(new TProgressUpdateResp(
-        Collections.emptyList[String],
-        Collections.emptyList[util.List[String]],
-        0.0D,
-        executionStatus,
-        "",
-        0L))
-      if (opException != null) {
-        resp.setSqlState(opException.getSQLState)
-        resp.setErrorCode(opException.getErrorCode)
-        if (opException.getErrorCode == 29999) {
-          resp.setErrorMessage(StringUtils.stringifyException(opException))
-        } else {
-          resp.setErrorMessage(opException.getMessage)
+
+    processOperationReq(req, resp) {
+      val operationHandle = new OperationHandle(req.getOperationHandle)
+      try {
+        val operationStatus =
+          cliService.getOperationStatus(operationHandle, req.isGetProgressUpdate)
+        resp.setOperationState(operationStatus.state.toTOperationState)
+        resp.setErrorMessage(operationStatus.state.getErrorMessage)
+        val opException = operationStatus.operationException
+        resp.setOperationStarted(operationStatus.operationStarted)
+        resp.setOperationCompleted(operationStatus.operationCompleted)
+        resp.setHasResultSet(operationStatus.hasResultSet)
+        val executionStatus = TJobExecutionStatus.NOT_AVAILABLE
+        resp.setProgressUpdateResponse(new TProgressUpdateResp(
+          Collections.emptyList[String],
+          Collections.emptyList[util.List[String]],
+          0.0D,
+          executionStatus,
+          "",
+          0L))
+        if (opException != null) {
+          resp.setSqlState(opException.getSQLState)
+          resp.setErrorCode(opException.getErrorCode)
+          if (opException.getErrorCode == 29999) {
+            resp.setErrorMessage(StringUtils.stringifyException(opException))
+          } else {
+            resp.setErrorMessage(opException.getMessage)
+          }
+        } else if (OperationType.EXECUTE_STATEMENT == operationHandle.getOperationType) {
+          resp.getProgressUpdateResponse.setProgressedPercentage(
+            getProgressedPercentage(operationHandle))
         }
-      } else if (OperationType.EXECUTE_STATEMENT == operationHandle.getOperationType) {
-        resp.getProgressUpdateResponse.setProgressedPercentage(
-          getProgressedPercentage(operationHandle))
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting operation status: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
       }
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting operation status: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
     }
+
     resp
   }
 
   @throws[TException]
   override def CancelOperation(req: TCancelOperationReq): TCancelOperationResp = {
     val resp = new TCancelOperationResp
-    try {
-      cliService.cancelOperation(new OperationHandle(req.getOperationHandle))
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error cancelling operation: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processOperationReq(req, resp) {
+      try {
+        cliService.cancelOperation(new OperationHandle(req.getOperationHandle))
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error cancelling operation: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def CloseOperation(req: TCloseOperationReq): TCloseOperationResp = {
     val resp = new TCloseOperationResp
-    try {
-      cliService.closeOperation(new OperationHandle(req.getOperationHandle))
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error closing operation: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processOperationReq(req, resp) {
+      try {
+        cliService.closeOperation(new OperationHandle(req.getOperationHandle))
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error closing operation: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetResultSetMetadata(req: TGetResultSetMetadataReq): TGetResultSetMetadataResp = {
     val resp = new TGetResultSetMetadataResp
-    try {
-      val schema = cliService.getResultSetMetadata(new OperationHandle(req.getOperationHandle))
-      resp.setSchema(schema.toTTableSchema)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting result set metadata: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processOperationReq(req, resp) {
+      try {
+        val schema = cliService.getResultSetMetadata(new OperationHandle(req.getOperationHandle))
+        resp.setSchema(schema.toTTableSchema)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting result set metadata: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def FetchResults(req: TFetchResultsReq): TFetchResultsResp = {
     val resp = new TFetchResultsResp
-    try {
-      // Set fetch size
-      val maxFetchSize = livyConf.getInt(LivyConf.THRIFT_RESULTSET_MAX_FETCH_SIZE)
-      if (req.getMaxRows > maxFetchSize) {
-        req.setMaxRows(maxFetchSize)
+
+    processOperationReq(req, resp) {
+      try {
+        // Set fetch size
+        val maxFetchSize = livyConf.getInt(LivyConf.THRIFT_RESULTSET_MAX_FETCH_SIZE)
+        if (req.getMaxRows > maxFetchSize) {
+          req.setMaxRows(maxFetchSize)
+        }
+        val rowSet = cliService.fetchResults(
+          new OperationHandle(req.getOperationHandle),
+          FetchOrientation.getFetchOrientation(req.getOrientation),
+          req.getMaxRows,
+          FetchType.getFetchType(req.getFetchType))
+        resp.setResults(rowSet.toTRowSet)
+        resp.setHasMoreRows(false)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error fetching results: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
       }
-      val rowSet = cliService.fetchResults(
-        new OperationHandle(req.getOperationHandle),
-        FetchOrientation.getFetchOrientation(req.getOrientation),
-        req.getMaxRows,
-        FetchType.getFetchType(req.getFetchType))
-      resp.setResults(rowSet.toTRowSet)
-      resp.setHasMoreRows(false)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error fetching results: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
     }
+
     resp
   }
 
   @throws[TException]
   override def GetPrimaryKeys(req: TGetPrimaryKeysReq): TGetPrimaryKeysResp = {
     val resp = new TGetPrimaryKeysResp
-    try {
-      val opHandle = cliService.getPrimaryKeys(
-        new SessionHandle(req.getSessionHandle),
-        req.getCatalogName,
-        req.getSchemaName,
-        req.getTableName)
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting functions: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getPrimaryKeys(
+          new SessionHandle(req.getSessionHandle),
+          req.getCatalogName,
+          req.getSchemaName,
+          req.getTableName)
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting functions: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 
   @throws[TException]
   override def GetCrossReference(req: TGetCrossReferenceReq): TGetCrossReferenceResp = {
     val resp = new TGetCrossReferenceResp
-    try {
-      val opHandle = cliService.getCrossReference(
-        new SessionHandle(req.getSessionHandle),
-        req.getParentCatalogName,
-        req.getParentSchemaName,
-        req.getParentTableName,
-        req.getForeignCatalogName,
-        req.getForeignSchemaName,
-        req.getForeignTableName)
-      resp.setOperationHandle(opHandle.toTOperationHandle)
-      resp.setStatus(ThriftCLIService.OK_STATUS)
-    } catch {
-      case e: Exception =>
-        warn("Error getting functions: ", e)
-        resp.setStatus(HiveSQLException.toTStatus(e))
+
+    processReq(req, resp) {
+      try {
+        val opHandle = cliService.getCrossReference(
+          new SessionHandle(req.getSessionHandle),
+          req.getParentCatalogName,
+          req.getParentSchemaName,
+          req.getParentTableName,
+          req.getForeignCatalogName,
+          req.getForeignSchemaName,
+          req.getForeignTableName)
+        resp.setOperationHandle(opHandle.toTOperationHandle)
+        resp.setStatus(ThriftCLIService.OK_STATUS)
+      } catch {
+        case e: Exception =>
+          warn("Error getting functions: ", e)
+          resp.setStatus(HiveSQLException.toTStatus(e))
+      }
     }
+
     resp
   }
 

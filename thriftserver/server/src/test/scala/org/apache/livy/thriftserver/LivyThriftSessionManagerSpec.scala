@@ -46,6 +46,11 @@ class LivyThriftSessionManagerSpec extends FunSpec with Matchers {
       val server = mock[LivyThriftServer]
       when(server.livyConf).thenReturn(conf)
 
+      val manager = mock[InteractiveSessionManager]
+      when(manager.serviceWatch).thenReturn(None)
+      when(server.livySessionManager).thenReturn(manager)
+
+
       val thriftSessionManager = new LivyThriftSessionManager(server, conf, sessionStore)
       thriftSessionManager.getSessions.isEmpty should be(true)
     }
