@@ -272,6 +272,12 @@
       <scope>test</scope>
     </dependency>
 
+    <dependency>
+      <groupId>com.tencent.tdw</groupId>
+      <artifactId>security-common</artifactId>
+      <version>${tauth.version}</version>
+    </dependency>
+
   </dependencies>
 
   <build>

@@ -93,6 +93,13 @@ object LivyConf {
   val AUTH_LDAP_USERNAME_DOMAIN = Entry("livy.server.auth.ldap.username-domain", null)
   val AUTH_LDAP_ENABLE_START_TLS = Entry("livy.server.auth.ldap.enable-start-tls", "false")
   val AUTH_LDAP_SECURITY_AUTH = Entry("livy.server.auth.ldap.security-authentication", "simple")
+
+  // TAuth configuration
+  val AUTH_TAUTH_URL = Entry("livy.server.auth.tauth.url", null)
+  val AUTH_TAUTH_ANTI_REPLAY = Entry("livy.server.auth.tauth.anti-replay", "true")
+  val AUTH_TAUTH_SERVICE_TARGET = Entry("livy.server.auth.tauth.service-target", null)
+  val AUTH_TAUTH_KEY_PATH = Entry("livy.server.auth.tauth.key-path", null)
+
   // kerberos configurations
   val AUTH_KERBEROS_PRINCIPAL = Entry("livy.server.auth.kerberos.principal", null)
   val AUTH_KERBEROS_KEYTAB = Entry("livy.server.auth.kerberos.keytab", null)

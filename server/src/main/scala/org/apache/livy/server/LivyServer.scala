@@ -21,12 +21,12 @@ import java.io.{BufferedInputStream, InputStream}
 import java.net.InetAddress
 import java.util.concurrent._
 import java.util.EnumSet
+
 import javax.servlet._
 
 import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-
 import org.apache.hadoop.security.{SecurityUtil, UserGroupInformation}
 import org.apache.hadoop.security.authentication.server._
 import org.eclipse.jetty.servlet.FilterHolder
@@ -34,10 +34,9 @@ import org.scalatra.{NotFound, ScalatraServlet}
 import org.scalatra.metrics.MetricsBootstrap
 import org.scalatra.metrics.MetricsSupportExtensions._
 import org.scalatra.servlet.{MultipartConfig, ServletApiImplicits}
-
 import org.apache.livy._
 import org.apache.livy.rsc.RSCConf.Entry.LAUNCHER_ADDRESS
-import org.apache.livy.server.auth.LdapAuthenticationHandlerImpl
+import org.apache.livy.server.auth.{LdapAuthenticationHandlerImpl, TAuthAuthenticationHandlerImpl}
 import org.apache.livy.server.batch.BatchSessionServlet
 import org.apache.livy.server.interactive.InteractiveSessionServlet
 import org.apache.livy.server.nodes.NodesServlet
@@ -106,7 +105,7 @@ class LivyServer extends Logging {
       _thriftServerFactory = Some(ThriftServerFactory.getInstance)
     }
 
-    if (UserGroupInformation.isSecurityEnabled) {
+    if (LivyServer.isKerberosEnabled) {
       // If Hadoop security is enabled, run kinit periodically. runKinit() should be called
       // before any Hadoop operation, otherwise Kerberos exception will be thrown.
       executor = Executors.newScheduledThreadPool(1,
@@ -298,6 +297,22 @@ class LivyServer extends Logging {
         server.context.addFilter(holder, "/*", EnumSet.allOf(classOf[DispatcherType]))
         info("LDAP auth enabled.")
 
+      case authType @ TAuthAuthenticationHandlerImpl.TYPE =>
+        val holder = new FilterHolder(new AuthenticationFilter())
+        holder.setInitParameter(AuthenticationFilter.AUTH_TYPE,
+          TAuthAuthenticationHandlerImpl.getClass.getCanonicalName.dropRight(1))
+        Option(livyConf.get(LivyConf.AUTH_TAUTH_URL)).foreach { url =>
+          holder.setInitParameter(TAuthAuthenticationHandlerImpl.TDW_SECURITY_URL, url)
+        }
+        holder.setInitParameter(TAuthAuthenticationHandlerImpl.KEY_PATH,
+          livyConf.get(LivyConf.AUTH_TAUTH_KEY_PATH))
+        holder.setInitParameter(TAuthAuthenticationHandlerImpl.ENABLE_ANTI_REPLAY,
+          livyConf.get(LivyConf.AUTH_TAUTH_ANTI_REPLAY))
+        holder.setInitParameter(TAuthAuthenticationHandlerImpl.SERVICE_TARGET,
+          livyConf.get(LivyConf.AUTH_TAUTH_SERVICE_TARGET))
+        server.context.addFilter(holder, "/*", EnumSet.allOf(classOf[DispatcherType]))
+        info("Tauth enabled.")
+
       case null =>
         // Nothing to do.
 
@@ -447,6 +462,16 @@ object LivyServer {
       server.join()
     } finally {
       server.stop()
+    }
+  }
+
+  def isKerberosEnabled(): Boolean = {
+    try {
+      classOf[UserGroupInformation].getMethod("isKerberosEnabled").invoke(null)
+        .asInstanceOf[Boolean]
+    } catch {
+      case e: NoSuchMethodException =>
+        return UserGroupInformation.isSecurityEnabled
     }
   }
 
