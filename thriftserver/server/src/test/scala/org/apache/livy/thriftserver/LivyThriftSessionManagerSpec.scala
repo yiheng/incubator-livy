@@ -24,9 +24,9 @@ import scala.util.{Failure, Try}
 
 import org.apache.hive.service.cli.{OperationHandle, OperationType, SessionHandle}
 import org.apache.hive.service.rpc.thrift.TProtocolVersion
-import org.scalatest.{FunSpec, Matchers}
-import org.mockito.Mockito.{times, verify, when}
 import org.mockito.Matchers.any
+import org.mockito.Mockito.{times, verify, when}
+import org.scalatest.{FunSpec, Matchers}
 import org.scalatest.mock.MockitoSugar.mock
 
 import org.apache.livy.LivyConf
