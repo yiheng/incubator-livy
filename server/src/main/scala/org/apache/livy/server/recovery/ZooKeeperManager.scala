@@ -191,15 +191,27 @@ class ZooKeeperManager private(
     cache.getListenable.addListener(listener)
   }
 
+  private def deleteNode(path: String): Unit = {
+    if (curatorClient.checkExists().forPath(path) != null) {
+      curatorClient.delete().forPath(path)
+    }
+  }
+
   def createEphemeralNode(path: String, value: Object): Unit = {
+    val key = prefixKey(path)
+    deleteNode(key)
+
     val data = serializeToBytes(value)
     curatorClient.create.creatingParentsIfNeeded.
-      withMode(CreateMode.EPHEMERAL).forPath(prefixKey(path), data)
+      withMode(CreateMode.EPHEMERAL).forPath(key, data)
   }
 
   def createStringEphemeralNode(path: String, data: String): Unit = {
+    val key = prefixKey(path)
+    deleteNode(key)
+
     curatorClient.create.creatingParentsIfNeeded.
-      withMode(CreateMode.EPHEMERAL).forPath(prefixKey(path), data.getBytes)
+      withMode(CreateMode.EPHEMERAL).forPath(key, data.getBytes)
   }
 
   private def prefixKey(key: String) = s"/$zkKeyPrefix/$key"
