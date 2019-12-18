@@ -108,12 +108,26 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
 
   serviceWatch.foreach(sw => {
     sw.registerNodeAddListener(_ => {
+      sessions.keySet.filter(!sw.contains(_)).foreach { id =>
+        if (sessionType == "interactive") {
+          sessions.get(id).get.asInstanceOf[InteractiveSession].
+            stopClient(false)
+        }
+
+        sessions.remove(id)
+      }
       recover().filter(s => !contains(s.id)).foreach(register)
-      sessions.keySet.filter(!sw.contains(_)).foreach(sessions.remove(_))
     })
     sw.registerNodeRemoveListener(_ => {
+      sessions.keySet.filter(!sw.contains(_)).foreach{ id =>
+        if (sessionType == "interactive") {
+          sessions.get(id).get.asInstanceOf[InteractiveSession].
+            stopClient(false)
+        }
+
+        sessions.remove(id)
+      }
       recover().filter(s => !contains(s.id)).foreach(register)
-      sessions.keySet.filter(!sw.contains(_)).foreach(sessions.remove(_))
     })
   })
   new GarbageCollector().start()

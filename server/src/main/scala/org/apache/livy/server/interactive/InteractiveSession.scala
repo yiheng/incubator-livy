@@ -401,6 +401,10 @@ class InteractiveSession(
 
   private var app: Option[SparkApp] = None
 
+  def stopClient(shutdownContext: Boolean): Unit = {
+    client.get.stop(shutdownContext)
+  }
+
   override def start(): Unit = {
     sessionStore.save(RECOVERY_SESSION_TYPE, recoveryMetadata)
     heartbeat()
