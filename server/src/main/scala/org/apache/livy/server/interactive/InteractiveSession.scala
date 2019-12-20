@@ -402,7 +402,7 @@ class InteractiveSession(
   private var app: Option[SparkApp] = None
 
   def stopClient(shutdownContext: Boolean): Unit = {
-    client.get.stop(shutdownContext)
+    client.foreach(_.stop(shutdownContext))
   }
 
   override def start(): Unit = {
