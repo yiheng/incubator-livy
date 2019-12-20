@@ -34,6 +34,7 @@ import org.apache.zookeeper.KeeperException.NoNodeException
 
 import org.apache.livy.LivyConf
 import org.apache.livy.LivyConf.Entry
+import org.apache.livy.Logging
 
 object ZooKeeperManager {
   val ZK_KEY_PREFIX_CONF = Entry("livy.server.recovery.zk-state-store.key-prefix", "livy")
@@ -69,7 +70,8 @@ object ZooKeeperManager {
 class ZooKeeperManager private(
     livyConf: LivyConf,
     mockCuratorClient: Option[CuratorFramework] = None,
-    mockDistributedLock: Option[InterProcessSemaphoreMutex] = None) extends JsonMapper{
+    mockDistributedLock: Option[InterProcessSemaphoreMutex] = None)
+  extends JsonMapper with Logging {
 
   import ZooKeeperManager._
 
@@ -152,7 +154,7 @@ class ZooKeeperManager private(
     try {
       curatorClient.delete().guaranteed().forPath(prefixKey(key))
     } catch {
-      case _: NoNodeException =>
+      case _: NoNodeException => warn(s"Fail to remove non-existed zookeeper node: ${key}")
     }
   }
 
