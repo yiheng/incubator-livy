@@ -160,8 +160,6 @@ class BatchSession(
 
   private[this] var _state: SessionState = initialState
 
-  private var app: Option[SparkApp] = None
-
   override def state: SessionState = _state
 
   override def logLines(): IndexedSeq[String] = app.map(_.log()).getOrElse(IndexedSeq.empty[String])

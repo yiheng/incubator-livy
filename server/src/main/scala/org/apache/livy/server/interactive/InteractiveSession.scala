@@ -399,8 +399,6 @@ class InteractiveSession(
 
   _appId = appIdHint
 
-  private var app: Option[SparkApp] = None
-
   def stopClient(shutdownContext: Boolean): Unit = {
     client.foreach(_.stop(shutdownContext))
   }

@@ -29,7 +29,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.security.UserGroupInformation
 
 import org.apache.livy.{LivyConf, Logging, Utils}
-import org.apache.livy.utils.AppInfo
+import org.apache.livy.utils.{AppInfo, SparkApp}
 
 object Session {
   trait RecoveryMetadata { val id: Int }
@@ -156,6 +156,8 @@ abstract class Session(
 
   private var _lastActivity = System.nanoTime()
 
+  protected var app: Option[SparkApp] = None
+
   // Directory where the session's staging files are created. The directory is only accessible
   // to the session's effective user.
   private var stagingDir: Path = null
@@ -275,6 +277,12 @@ abstract class Session(
       debug(s"Session $id staging directory is $stagingDir")
     }
     stagingDir
+  }
+
+  def stopMonitorSparkApp(): Unit = {
+    if (app.isDefined) {
+      app.get.stopMonitor
+    }
   }
 
 }

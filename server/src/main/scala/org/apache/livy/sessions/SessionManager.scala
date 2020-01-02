@@ -109,9 +109,12 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
   serviceWatch.foreach(sw => {
     sw.registerNodeAddListener(_ => {
       sessions.keySet.filter(!sw.contains(_)).foreach { id =>
+        val session = sessions.get(id).get
+        session.stopMonitorSparkApp()
+
         if (sessionType == "interactive") {
-          sessions.get(id).get.asInstanceOf[InteractiveSession].
-            stopClient(false)
+          val interactiveSession = session.asInstanceOf[InteractiveSession]
+          interactiveSession.stopClient(false)
         }
 
         sessions.remove(id)
@@ -120,9 +123,12 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
     })
     sw.registerNodeRemoveListener(_ => {
       sessions.keySet.filter(!sw.contains(_)).foreach{ id =>
+        val session = sessions.get(id).get
+        session.stopMonitorSparkApp()
+
         if (sessionType == "interactive") {
-          sessions.get(id).get.asInstanceOf[InteractiveSession].
-            stopClient(false)
+          val interactiveSession = session.asInstanceOf[InteractiveSession]
+          interactiveSession.stopClient(false)
         }
 
         sessions.remove(id)

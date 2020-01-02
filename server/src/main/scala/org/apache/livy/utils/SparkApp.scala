@@ -102,4 +102,5 @@ object SparkApp {
 abstract class SparkApp {
   def kill(): Unit
   def log(): IndexedSeq[String]
+  def stopMonitor(): Unit
 }

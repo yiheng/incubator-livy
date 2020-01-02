@@ -41,6 +41,8 @@ class SparkProcApp (
     }
   }
 
+  override def stopMonitor(): Unit = {}
+
   override def log(): IndexedSeq[String] =
     ("stdout: " +: process.inputLines) ++ ("\nstderr: " +: process.errorLines)
 

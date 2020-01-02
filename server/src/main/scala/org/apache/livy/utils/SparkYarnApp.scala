@@ -126,6 +126,11 @@ class SparkYarnApp private[utils] (
   private val appIdPromise: Promise[ApplicationId] = Promise()
   private[utils] var state: SparkApp.State = SparkApp.State.STARTING
   private var yarnDiagnostics: IndexedSeq[String] = IndexedSeq.empty[String]
+  private var isStopMonitor = false
+
+  override def stopMonitor(): Unit = {
+    this.isStopMonitor = true
+  }
 
   override def log(): IndexedSeq[String] =
     ("stdout: " +: process.map(_.inputLines).getOrElse(ArrayBuffer.empty[String])) ++
@@ -265,7 +270,7 @@ class SparkYarnApp private[utils] (
 
       val pollInterval = SparkYarnApp.getYarnPollInterval(livyConf)
       var appInfo = AppInfo()
-      while (isRunning) {
+      while (isRunning && !isStopMonitor) {
         try {
           Clock.sleep(pollInterval.toMillis)
 
