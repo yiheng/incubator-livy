@@ -52,7 +52,7 @@ class ThriftSessionStore(
         try {
           store.get[ThriftSessionRecoveryMetadata](path).map(Success(_))
         } catch {
-          case NonFatal(e) => Some(Failure(new IOException(
+          case e: Exception => Some(Failure(new IOException(
             s"Error getting thrift session $path", e)))
         }
       }
@@ -74,7 +74,7 @@ class ThriftSessionStore(
           store.get[StatementRecoveryMetadata](
             statementPath(livySessionId, statementId)).map(Success(_))
         } catch {
-          case NonFatal(e) => Some(Failure(
+          case e: Exception => Some(Failure(
             new IOException(
               s"Error getting statement ${statementPath(livySessionId, statementId)}",
               e)))
