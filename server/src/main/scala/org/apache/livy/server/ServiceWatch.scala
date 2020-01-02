@@ -16,6 +16,8 @@
  */
 package org.apache.livy.server
 
+import java.util.UUID
+
 import scala.collection.mutable.{ArrayBuffer, Set}
 
 import org.apache.livy.LivyConf
@@ -30,7 +32,8 @@ private case class ServiceNode(
    restPort: Int,
    enableThrift: Boolean,
    thriftPort: Int,
-   replicateNum: Int)
+   replicateNum: Int,
+   UUID: String)
 
 class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
   require(ZooKeeperManager.get != null, "Cannot find zookeeper service")
@@ -46,9 +49,11 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
   private val nodeAddListeners = new ArrayBuffer[String => Unit]()
   private val nodeRemoveListeners = new ArrayBuffer[String => Unit]()
 
+  private val separator = "#"
+
   ZooKeeperManager.get.getChildren(dir).foreach(node => {
     val serviceNode = ZooKeeperManager.get.get[ServiceNode](dir + "/" + node).get
-    consistentHash.addNode(node, serviceNode.replicateNum)
+    consistentHash.addNode(getConsistentHashKey(serviceNode), serviceNode.replicateNum)
   })
 
   ZooKeeperManager.get.watchAddNode(dir, nodeAddHandler)
@@ -64,21 +69,32 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
         livyConf.get(THRIFT_ZOOKEEPER_NAMESPACE) + "/" + thriftAddr, thriftAddr)
     }
 
-    val node = ServiceNode(serverIP, port, enableThrift, thriftPort, replicateNum)
+    val node = ServiceNode(serverIP, port, enableThrift, thriftPort, replicateNum,
+      UUID.randomUUID().toString)
     ZooKeeperManager.get.createEphemeralNode(dir + "/" + restAddr, node)
   }
 
   def contains(sessionId: Int): Boolean = {
     // We have added current node into consistentHash
-    consistentHash.searchNode(sessionId.toString).get == restAddr
+    getRestAddr(sessionId) == restAddr
   }
 
   def getNodes(): Set[String] = {
-    consistentHash.getNodes
+    val nodes: Set[String] = Set()
+    consistentHash.getNodes.foreach(node => nodes.add(node.split(separator)(0)))
+    nodes
+  }
+
+  def getRestAddr(sessionId: Int): String = {
+    consistentHash.searchNode(sessionId.toString).get.split(separator)(0)
+  }
+
+  def getConsistentHashKey(node: ServiceNode): String = {
+    s"${node.ip}:${node.restPort}${separator}${node.UUID}"
   }
 
   def search(sessionId: Int, path: String = dir): (String, Int) = {
-    val key = consistentHash.searchNode(sessionId.toString).get
+    val key = getRestAddr(sessionId)
     val serviceNode = ZooKeeperManager.get.get[ServiceNode](path + "/" + key).get
     (serviceNode.ip, serviceNode.restPort)
   }
@@ -86,7 +102,7 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
   def searchThrift(sessionId: Int): (String, Int) = {
     require(livyConf.getBoolean(THRIFT_SERVER_ENABLED), "Thrift service is not configured")
 
-    val key = consistentHash.searchNode(sessionId.toString).get
+    val key = getRestAddr(sessionId)
     val serviceNode = ZooKeeperManager.get.get[ServiceNode](dir + "/" + key).get
     (serviceNode.ip, serviceNode.thriftPort)
   }
@@ -100,18 +116,18 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
   }
 
   private def nodeAddHandler(path: String, node: ServiceNode): Unit = {
-    val addr = s"${node.ip}:${node.restPort}"
-    logger.info("Detect new node add: " + addr + " replicate num:" + node.replicateNum)
+    val key = getConsistentHashKey(node)
+    logger.info("Detect new node add: " + key + " replicate num:" + node.replicateNum)
 
-    consistentHash.addNode(addr, node.replicateNum)
-    nodeAddListeners.foreach(_(addr))
+    consistentHash.addNode(key, node.replicateNum)
+    nodeAddListeners.foreach(_(key))
   }
 
   private def nodeRemoveHandler(path: String, node: ServiceNode): Unit = {
-    val addr = s"${node.ip}:${node.restPort}"
-    logger.info("Detect node removed: " + addr + " replicate num:" + node.replicateNum)
+    val key = getConsistentHashKey(node)
+    logger.info("Detect node removed: " + key + " replicate num:" + node.replicateNum)
 
-    consistentHash.removeNode(addr)
-    nodeRemoveListeners.foreach(_(addr))
+    consistentHash.removeNode(key)
+    nodeRemoveListeners.foreach(_(key))
   }
 }

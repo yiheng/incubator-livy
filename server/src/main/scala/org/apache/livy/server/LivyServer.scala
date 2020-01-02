@@ -155,6 +155,7 @@ class LivyServer extends Logging {
       ZooKeeperManager(livyConf)
       serviceWatch = Some(new ServiceWatch(livyConf,
         ZooKeeperManager.haPrefixKey("service")))
+      serviceWatch.foreach(_.register())
     }
 
     StateStore.init(livyConf)
@@ -352,7 +353,6 @@ class LivyServer extends Logging {
 
     _serverUrl = Some(s"${server.protocol}://${server.host}:${server.port}")
     sys.props("livy.server.server-url") = _serverUrl.get
-    serviceWatch.foreach(_.register())
   }
 
   def runKinit(keytab: String, principal: String): Boolean = {
