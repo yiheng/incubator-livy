@@ -70,17 +70,39 @@ class AuthBridgeServer(private val secretManager: LivyDelegationTokenSecretManag
   @throws[TTransportException]
   def createSaslServerTransportFactory(
       saslProps: util.Map[String, String]): TSaslServerTransport.Factory = {
-    // Parse out the kerberos principal, host, realm.
-    val kerberosName: String = ugi.getUserName
-    val names: Array[String] = SaslRpcServer.splitKerberosName(kerberosName)
-    if (names.length != 3) {
-      throw new TTransportException(s"Kerberos principal should have 3 parts: $kerberosName")
-    }
     val transFactory: TSaslServerTransport.Factory = new TSaslServerTransport.Factory
-    transFactory.addServerDefinition(AuthMethod.KERBEROS.getMechanismName,
-      names(0), names(1), // two parts of kerberos principal
-      saslProps,
-      new SaslRpcServer.SaslGssCallbackHandler)
+    val tauthName = "TAUTH"
+    if (ugi.getAuthenticationMethod.name() == tauthName) {
+      val utilMethod = Class.forName("org.apache.hadoop.security.Utils")
+        .getMethod("getSystemPropertyOrEnvVar", classOf[String], classOf[java.lang.Boolean])
+      val serverName =
+        if (utilMethod.invoke(null, "tq.service.as.login", false.asInstanceOf[Object])
+          .toString.toBoolean) {
+          ugi.getUserName()
+        } else null
+      val serviceNameObj = saslProps.get("tq.service.name")
+      val tqServerCallbackHandler =
+        Class.forName("org.apache.livy.thriftserver.auth.HiveTqServerCallbackHandler")
+      .getConstructor(classOf[String]).newInstance(serviceNameObj).asInstanceOf[CallbackHandler]
+
+      transFactory.addServerDefinition(
+        tauthName,
+        "",
+        serverName,
+        saslProps,
+        tqServerCallbackHandler)
+    } else if (ugi.getAuthenticationMethod == AuthenticationMethod.KERBEROS) {
+      // Parse out the kerberos principal, host, realm.
+      val kerberosName: String = ugi.getUserName
+      val names: Array[String] = SaslRpcServer.splitKerberosName(kerberosName)
+      if (names.length != 3) {
+        throw new TTransportException(s"Kerberos principal should have 3 parts: $kerberosName")
+      }
+      transFactory.addServerDefinition(AuthMethod.KERBEROS.getMechanismName,
+        names(0), names(1), // two parts of kerberos principal
+        saslProps,
+        new SaslRpcServer.SaslGssCallbackHandler)
+    }
     transFactory.addServerDefinition(AuthMethod.TOKEN.getMechanismName,
       null,
       SaslRpcServer.SASL_DEFAULT_REALM,

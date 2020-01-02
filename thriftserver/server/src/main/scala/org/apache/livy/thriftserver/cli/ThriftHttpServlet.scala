@@ -25,6 +25,7 @@ import javax.ws.rs.core.NewCookie
 
 import scala.collection.JavaConverters._
 
+import com.tencent.tdw.security.authentication.Authentication
 import org.apache.commons.codec.binary.{Base64, StringUtils}
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.hadoop.security.authentication.util.KerberosName
@@ -102,13 +103,16 @@ class ThriftHttpServlet(
       // depending on the server setup.
       if (clientUserName == null) {
         // For a kerberos setup
-        if (ThriftHttpServlet.isKerberosAuthMode(authType)) {
+        if (ThriftHttpServlet.isKerberosAuthMode(authType) ||
+          ThriftHttpServlet.isTAuthAuthMode(authType)) {
           val delegationToken = request.getHeader(ThriftHttpServlet.HIVE_DELEGATION_TOKEN_HEADER)
           // Each http request must have an Authorization header
           if ((delegationToken != null) && (!delegationToken.isEmpty)) {
             clientUserName = doTokenAuth(request, response)
-          } else {
+          } else if (ThriftHttpServlet.isKerberosAuthMode(authType)) {
             clientUserName = doKerberosAuth(request)
+          } else if (ThriftHttpServlet.isTAuthAuthMode(authType)) {
+            clientUserName = doTAuthAuth(request)
           }
         } else {
           // For password based authentication
@@ -289,6 +293,30 @@ class ThriftHttpServlet(
     }
   }
 
+  private def doTAuthAuth(request: HttpServletRequest) = {
+    val authentication = ThriftHttpServlet.getAuthHeader(request, authType)
+    try
+      serviceUGI.doAs(new PrivilegedExceptionAction[String]() {
+        @throws[Exception]
+        override def run: String = {
+          val secureService = authFactory.secureService
+          if (secureService == null) {
+            throw new IllegalArgumentException("Secure service is null of "
+              + UserGroupInformation.getCurrentUser.getUserName)
+          }
+          val authenticator = secureService.authenticate(Authentication.valueOf(authentication))
+          if (authenticator.hasProxy) authFactory.imperAndAuthProvider.authorize(
+            authenticator.getRealUser,
+            authenticator.getUser)
+          authenticator.getUser
+        }
+      })
+    catch {
+      case e: Exception =>
+        throw new HttpAuthenticationException("Failed to authenticate with TAuth", e)
+    }
+  }
+
   /**
    * Do the GSS-API kerberos authentication. We already have a logged in subject in the form of
    * serviceUGI, which GSS-API will extract information from.
@@ -408,7 +436,7 @@ object ThriftHttpServlet extends Logging {
         "from the client is empty.")
     }
 
-    val beginIndex = if (isKerberosAuthMode(authType)) {
+    val beginIndex = if (isKerberosAuthMode(authType) || isTAuthAuthMode(authType)) {
       (HttpAuthUtils.NEGOTIATE + " ").length()
     } else {
       (HttpAuthUtils.BASIC + " ").length()
@@ -425,6 +453,9 @@ object ThriftHttpServlet extends Logging {
   private def isKerberosAuthMode(authType: String): Boolean = {
     authType.equalsIgnoreCase(AuthTypes.KERBEROS.toString)
   }
+
+  private def isTAuthAuthMode(authType: String) =
+    "tauth".equalsIgnoreCase(authType)
 }
 
 class HttpKerberosServerAction(
@@ -482,7 +513,7 @@ class HttpKerberosServerAction(
     }
   }
 
-  private def getPrincipalWithoutRealm(fullPrincipal: String): String = {
+  private def getPrincipalWithoutRealm(fullPrincipal: String) = {
     val fullKerberosName = new KerberosName(fullPrincipal)
     val serviceName = fullKerberosName.getServiceName
     val hostName = fullKerberosName.getHostName

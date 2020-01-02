@@ -22,7 +22,7 @@ import java.security.PrivilegedExceptionAction
 import org.apache.hadoop.security.UserGroupInformation
 
 import org.apache.livy.{LivyConf, Logging}
-import org.apache.livy.server.AccessManager
+import org.apache.livy.server.{AccessManager, LivyServer}
 import org.apache.livy.server.interactive.InteractiveSession
 import org.apache.livy.server.recovery.SessionStore
 import org.apache.livy.sessions.InteractiveSessionManager
@@ -54,7 +54,7 @@ object LivyThriftServer extends Logging {
               livySessionManager,
               sessionStore,
               accessManager)
-            if (UserGroupInformation.isSecurityEnabled) {
+            if (LivyServer.isKerberosEnabled) {
               ugi.doAs(new PrivilegedExceptionAction[Unit] {
                 override def run(): Unit = {
                   doStart(livyConf)
@@ -100,6 +100,16 @@ object LivyThriftServer extends Logging {
   def isHTTPTransportMode(livyConf: LivyConf): Boolean = {
     val transportMode = livyConf.get(LivyConf.THRIFT_TRANSPORT_MODE)
     transportMode != null && transportMode.equalsIgnoreCase("http")
+  }
+
+  def isTAuthEnabled(): Boolean = {
+    try {
+      classOf[UserGroupInformation].getMethod("isTAuthEnabled").invoke(null)
+        .asInstanceOf[Boolean]
+    } catch {
+      case e: NoSuchMethodException =>
+        return false
+    }
   }
 }
 

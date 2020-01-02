@@ -39,6 +39,7 @@ import org.apache.thrift.TException
 import org.apache.thrift.server.ServerContext
 
 import org.apache.livy.LivyConf
+import org.apache.livy.server.LivyServer
 import org.apache.livy.thriftserver.auth.AuthFactory
 import org.apache.livy.thriftserver.LivyCLIService
 import org.apache.livy.thriftserver.LivyThriftServer
@@ -175,7 +176,7 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
     val resp: TGetDelegationTokenResp = new TGetDelegationTokenResp
 
     processReq(req, resp) {
-      if (!hiveAuthFactory.isSASLKerberosUser) {
+      if (!hiveAuthFactory.isSASLKerberosUser || !hiveAuthFactory.isSASLTAuthUser) {
         resp.setStatus(unsecureTokenErrorStatus)
       } else {
         try {
@@ -201,7 +202,7 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
     val resp: TCancelDelegationTokenResp = new TCancelDelegationTokenResp
 
     processReq(req, resp) {
-      if (!hiveAuthFactory.isSASLKerberosUser) {
+      if (!hiveAuthFactory.isSASLKerberosUser || !hiveAuthFactory.isSASLTAuthUser) {
         resp.setStatus(unsecureTokenErrorStatus)
       } else {
         try {
@@ -224,7 +225,7 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
     val resp: TRenewDelegationTokenResp = new TRenewDelegationTokenResp
 
     processReq(req, resp) {
-      if (!hiveAuthFactory.isSASLKerberosUser) {
+      if (!hiveAuthFactory.isSASLKerberosUser || !hiveAuthFactory.isSASLTAuthUser) {
         resp.setStatus(unsecureTokenErrorStatus)
       } else {
         try {
@@ -859,7 +860,7 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
   @throws[HiveSQLException]
   private def verifyProxyAccess(realUser: String, proxyUser: String, ipAddress: String): Unit = {
     try {
-      val sessionUgi = if (UserGroupInformation.isSecurityEnabled) {
+      val sessionUgi = if (LivyServer.isKerberosEnabled) {
           UserGroupInformation.createProxyUser(
             new KerberosName(realUser).getServiceName, UserGroupInformation.getLoginUser)
         } else {

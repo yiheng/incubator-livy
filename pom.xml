@@ -1062,6 +1062,16 @@
       </modules>
     </profile>
 
+    <profile>
+      <id>thriftserver-tauth</id>
+      <modules>
+        <module>thriftserver/server</module>
+        <module>thriftserver/session</module>
+        <module>thriftserver/client</module>
+        <module>thriftserver/tauth</module>
+      </modules>
+    </profile>
+
     <!-- Spark version profiles -->
     <profile>
       <id>spark-2.3</id>

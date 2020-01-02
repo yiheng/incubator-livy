@@ -23,6 +23,7 @@ import javax.security.auth.callback._
 import javax.security.auth.login.LoginException
 import javax.security.sasl.{AuthorizeCallback, Sasl}
 
+import com.tencent.tdw.security.authentication.service.SecureServiceFactory
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION
 import org.apache.hadoop.security.SaslRpcServer.AuthMethod
@@ -48,7 +49,7 @@ class AuthFactory(val conf: LivyConf) extends Logging {
   // hadoopAuth is not simple, it does not guarantee it is kerberos
   private val hadoopAuth = new Configuration().get(HADOOP_SECURITY_AUTHENTICATION)
 
-  private val secretManager = if (isSASLWithKerberizedHadoop) {
+  private val secretManager = if (isSASLWithHadoop) {
       val sm = new LivyDelegationTokenSecretManager(conf)
       try {
         sm.startThreads()
@@ -65,6 +66,13 @@ class AuthFactory(val conf: LivyConf) extends Logging {
       new AuthBridgeServer(sm)
     }
 
+  val secureService =
+    if (isSASLWithTAuthedHadoop) SecureServiceFactory.getDefault else null
+  val imperAndAuthProvider =
+    if (isSASLWithTAuthedHadoop) {
+      SecureServiceFactory.getImpersonationAndAuthorizationProvider(secureService)
+    } else null
+
   def getSaslProperties: util.Map[String, String] = {
     val saslProps = new util.HashMap[String, String]
     val saslQOP = SaslQOP.fromString(conf.get(LivyConf.THRIFT_SASL_QOP))
@@ -76,6 +84,7 @@ class AuthFactory(val conf: LivyConf) extends Logging {
   @throws[LoginException]
   def getAuthTransFactory: TTransportFactory = {
     val isAuthKerberos = authTypeStr.equalsIgnoreCase(AuthTypes.KERBEROS.getAuthName)
+    val isAuthTauth = authTypeStr.equalsIgnoreCase("tauth")
     val isAuthNoSASL = authTypeStr.equalsIgnoreCase(AuthTypes.NOSASL.getAuthName)
     // TODO: add PAM when supported
     val isAuthOther = authTypeStr.equalsIgnoreCase(AuthTypes.LDAP.getAuthName) ||
@@ -91,7 +100,7 @@ class AuthFactory(val conf: LivyConf) extends Logging {
       }
       if (isAuthOther) {
         PlainSaslServer.addPlainServerDefinition(serverTransportFactory, authTypeStr, conf)
-      } else if (!isAuthKerberos) {
+      } else if (!isAuthKerberos && !isAuthTauth) {
         throw new LoginException(s"Unsupported authentication type $authTypeStr")
       }
       server.wrapTransportFactory(serverTransportFactory)
@@ -125,10 +134,20 @@ class AuthFactory(val conf: LivyConf) extends Logging {
 
   def getUserAuthMechanism: String = saslServer.map(_.getUserAuthMechanism).orNull
 
+  def isSASLWithHadoop: Boolean = isSASLWithKerberizedHadoop || isSASLWithTAuthedHadoop
+
   def isSASLWithKerberizedHadoop: Boolean = {
     "kerberos".equalsIgnoreCase(hadoopAuth) &&
       !authTypeStr.equalsIgnoreCase(AuthTypes.NOSASL.getAuthName)
   }
+
+  def isSASLWithTAuthedHadoop: Boolean =
+    "tauth".equalsIgnoreCase(hadoopAuth) &&
+      !authTypeStr.equalsIgnoreCase(AuthTypes.NOSASL.getAuthName)
+
+  def isSASLTAuthUser: Boolean =
+    "tauth".equalsIgnoreCase(getUserAuthMechanism)  ||
+      AuthMethod.TOKEN.getMechanismName  == getUserAuthMechanism
 
   def isSASLKerberosUser: Boolean = {
     AuthMethod.KERBEROS.getMechanismName == getUserAuthMechanism ||

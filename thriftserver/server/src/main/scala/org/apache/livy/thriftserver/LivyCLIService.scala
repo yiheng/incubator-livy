@@ -28,6 +28,7 @@ import org.apache.hive.service.cli._
 import org.apache.hive.service.rpc.thrift.{TOperationHandle, TProtocolVersion}
 
 import org.apache.livy.{LIVY_VERSION, LivyConf, Logging}
+import org.apache.livy.server.LivyServer
 import org.apache.livy.thriftserver.auth.AuthFactory
 import org.apache.livy.thriftserver.operation.{Operation, OperationStatus}
 import org.apache.livy.thriftserver.recovery.ThriftSessionStore
@@ -51,7 +52,7 @@ class LivyCLIService(server: LivyThriftServer)
     defaultFetchRows = livyConf.getInt(LivyConf.THRIFT_RESULTSET_DEFAULT_FETCH_SIZE)
     maxTimeout = livyConf.getTimeAsMs(LivyConf.THRIFT_LONG_POLLING_TIMEOUT)
     //  If the hadoop cluster is secure, do a kerberos login for the service from the keytab
-    if (UserGroupInformation.isSecurityEnabled) {
+    if (LivyServer.isKerberosEnabled) {
       try {
         serviceUGI = UserGroupInformation.getCurrentUser
       } catch {
@@ -72,6 +73,16 @@ class LivyCLIService(server: LivyThriftServer)
       } catch {
         case e: IOException =>
           warn("SPNego httpUGI creation failed: ", e)
+      }
+    }
+
+    if (LivyThriftServer.isTAuthEnabled) {
+      try {
+        serviceUGI = UserGroupInformation.getCurrentUser
+        httpUGI = UserGroupInformation.getCurrentUser
+      } catch {
+        case e: IOException =>
+          throw new ServiceException("Unable to login", e)
       }
     }
     super.init(livyConf)
