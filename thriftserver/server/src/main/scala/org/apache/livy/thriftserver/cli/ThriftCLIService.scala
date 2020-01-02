@@ -271,6 +271,13 @@ abstract class ThriftCLIService(val cliService: LivyCLIService, val serviceName:
         context.asInstanceOf[ThriftCLIServerContext].setSessionHandle(sessionHandle)
       }
     } catch {
+      case e: HiveSQLException =>
+        if (e.getErrorCode() == MultiActiveConstants.MULTI_ACTIVE_REDIRECT_CODE) {
+          info("Request redirect " + e.getMessage)
+        } else {
+          warn("Error opening session: ", e)
+        }
+        resp.setStatus(HiveSQLException.toTStatus(e))
       case e: Exception =>
         warn("Error opening session: ", e)
         resp.setStatus(HiveSQLException.toTStatus(e))
