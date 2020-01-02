@@ -29,24 +29,28 @@ private case class ServiceNode(
    ip: String,
    restPort: Int,
    enableThrift: Boolean,
-   thriftPort: Int)
+   thriftPort: Int,
+   replicateNum: Int)
 
 class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
   require(ZooKeeperManager.get != null, "Cannot find zookeeper service")
-  private val consistentHash =
-    new ConsistentHash(livyConf.getInt(LivyConf.HA_CONSISTENT_HASH_REPLICA_NUM))
+  private val consistentHash = new ConsistentHash
 
   private val serverIP = livyConf.get(LAUNCHER_ADDRESS)
   require(serverIP != null, "Please config the livy.rsc.launcher.address")
   private val port = livyConf.getInt(SERVER_PORT)
   private val restAddr = s"$serverIP:$port"
 
-  consistentHash.addNode(restAddr)
+  private val replicateNum = livyConf.getInt(LivyConf.HA_CONSISTENT_HASH_REPLICA_NUM)
 
   private val nodeAddListeners = new ArrayBuffer[String => Unit]()
   private val nodeRemoveListeners = new ArrayBuffer[String => Unit]()
 
-  ZooKeeperManager.get.getChildren(dir).foreach(node => consistentHash.addNode(node))
+  ZooKeeperManager.get.getChildren(dir).foreach(node => {
+    val serviceNode = ZooKeeperManager.get.get[ServiceNode](dir + "/" + node).get
+    consistentHash.addNode(node, serviceNode.replicateNum)
+  })
+
   ZooKeeperManager.get.watchAddNode(dir, nodeAddHandler)
   ZooKeeperManager.get.watchRemoveNode(dir, nodeRemoveHandler)
 
@@ -60,7 +64,7 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
         livyConf.get(THRIFT_ZOOKEEPER_NAMESPACE) + "/" + thriftAddr, thriftAddr)
     }
 
-    val node = ServiceNode(serverIP, port, enableThrift, thriftPort)
+    val node = ServiceNode(serverIP, port, enableThrift, thriftPort, replicateNum)
     ZooKeeperManager.get.createEphemeralNode(dir + "/" + restAddr, node)
   }
 
@@ -97,15 +101,15 @@ class ServiceWatch(livyConf: LivyConf, dir: String) extends Logging {
 
   private def nodeAddHandler(path: String, node: ServiceNode): Unit = {
     val addr = s"${node.ip}:${node.restPort}"
-    logger.info("Detect new node add: " + addr)
+    logger.info("Detect new node add: " + addr + " replicate num:" + node.replicateNum)
 
-    consistentHash.addNode(addr)
+    consistentHash.addNode(addr, node.replicateNum)
     nodeAddListeners.foreach(_(addr))
   }
 
   private def nodeRemoveHandler(path: String, node: ServiceNode): Unit = {
     val addr = s"${node.ip}:${node.restPort}"
-    logger.info("Detect node removed: " + addr)
+    logger.info("Detect node removed: " + addr + " replicate num:" + node.replicateNum)
 
     consistentHash.removeNode(addr)
     nodeRemoveListeners.foreach(_(addr))

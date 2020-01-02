@@ -26,21 +26,14 @@ import scala.collection.mutable.Set
   * For Consistent Hash Algorithm, See:
   * https://www.cs.princeton.edu/courses/archive/fall09/cos518/papers/chash.pdf
   */
-class ConsistentHash(replicateNum: Int) {
+class ConsistentHash {
   private val MD5_BYTE_LEN = 16
   private val HASH_BYTE_LEN = 4
   private val REPLICATE_NUM_SHARE_MD5 = MD5_BYTE_LEN / HASH_BYTE_LEN
 
   private val virtualNodes = new TreeMap[Long, String]()
 
-  def this(nodes: List[String], replicateNum: Int) {
-    this(replicateNum)
-    for (node <- nodes) {
-      addNode(node)
-    }
-  }
-
-  def addNode(node: String): Unit = {
+  def addNode(node: String, replicateNum: Int): Unit = {
     if (virtualNodes.containsValue(node)) {
       return
     }
