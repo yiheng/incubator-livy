@@ -25,6 +25,11 @@ case class ServiceNode(host: String, port: Int, UUID: String)
  */
 abstract class ClusterManager {
   /**
+   * Return the service node for the current server
+   */
+  def currentServer(): ServiceNode
+
+  /**
    * Register current node into the cluster. It should be invoked when the node is ready
    * for service.
    */

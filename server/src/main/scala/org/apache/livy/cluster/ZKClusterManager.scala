@@ -33,6 +33,8 @@ class ZKClusterManager(livyConf: LivyConf, zkManager: ZooKeeperManager)
   require(serverIP != null, "Please config the livy.rsc.launcher.address")
 
   private val port = livyConf.getInt(SERVER_PORT)
+  private val serverNode = ServiceNode(serverIP, port, UUID.randomUUID().toString)
+
   private val serviceDir = livyConf.get(ZK_SERVICE_DIR)
 
   private val nodes = new mutable.HashSet[ServiceNode]()
@@ -48,9 +50,10 @@ class ZKClusterManager(livyConf: LivyConf, zkManager: ZooKeeperManager)
   zkManager.watchAddNode(serviceDir, nodeAddHandler)
   zkManager.watchRemoveNode(serviceDir, nodeRemoveHandler)
 
+  override def currentServer(): ServiceNode = serverNode
+
   override def register(): Unit = {
-    val node = ServiceNode(serverIP, port, UUID.randomUUID().toString)
-    zkManager.createEphemeralNode(serviceDir + "/" + serverIP + ":" + port, node)
+    zkManager.createEphemeralNode(serviceDir + "/" + serverIP + ":" + port, serverNode)
   }
 
   override def getNodes(): Set[ServiceNode] = {

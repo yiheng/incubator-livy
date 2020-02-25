@@ -201,6 +201,11 @@ object LivyConf {
   val HA_MODE_RECOVERY = "recovery"
   val HA_MODE_MULTI_ACTIVE = "multi-active"
 
+  val HA_ALLOCATOR_CLASS = Entry("livy.server.ha.allocator.class",
+    "org.apache.livy.cluster.ServerSessionMapping")
+  val HA_ALLOCATOR_MAPPING = Entry("livy.server.ha.allocator.session-map",
+    "/livy/ha/allocator/session-map")
+
 
   // Zookeeper address used for HA and state store. e.g. host1:port1, host2:port2
   val ZOOKEEPER_URL = Entry("livy.server.zookeeper.url", null)

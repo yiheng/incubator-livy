@@ -123,6 +123,12 @@
 # 4. multi-active: HA with multi-active mode.
 # livy.server.ha.mode=
 
+# Session allocator
+# livy.server.ha.allocator.class=org.apache.livy.cluster.ServerSessionMapping
+
+# Base path of server session map allocator on state store.
+# livy.server.ha.allocator.session-map=/livy/ha/allocator/session-map
+
 # Where Livy should store state to for recovery. Possible values:
 # <empty>: Default. State store disabled.
 # filesystem: Store state on a file system.
